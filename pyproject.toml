@@ -1,6 +1,6 @@
 [project]
 name = "py-inbox-helper"
-version = "0.1.3"
+version = "0.1.4"
 description = "A python GUI application to help manage a chaotic and neglected email inbox of a busy person."
 readme = "README.md"
 authors = [
