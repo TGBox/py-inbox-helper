@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, List, Optional
 import uuid
 
-from py_inbox_helper.models import EmailItem, ExecutionResult, PlannedAction
+from py_inbox_helper.models import EmailItem, ExecutionResult, PlannedAction, ensure_utc
 from py_inbox_helper.provider.base import AccountInfo, BaseMailProvider, FolderInfo
 
 
@@ -190,9 +190,11 @@ class MockMailProvider(BaseMailProvider):
             if item.store_id == account_id and item.folder_path in folder_paths
         ]
         if date_from:
-            matches = [m for m in matches if m.received_time >= date_from]
+            df = ensure_utc(date_from)
+            matches = [m for m in matches if ensure_utc(m.received_time) >= df]
         if date_to:
-            matches = [m for m in matches if m.received_time <= date_to]
+            dt = ensure_utc(date_to)
+            matches = [m for m in matches if ensure_utc(m.received_time) <= dt]
 
         total = len(matches)
         results = []

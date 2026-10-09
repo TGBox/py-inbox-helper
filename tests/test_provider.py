@@ -63,3 +63,20 @@ def test_mock_provider_execute_and_restore():
     restored_item = provider.get_item(sample.entry_id, sample.store_id)
     assert restored_item.folder_path == "Posteingang"
     assert restored_item.is_read is False
+
+
+def test_mock_provider_fetch_with_naive_date_filters():
+    provider = MockMailProvider()
+    accounts = provider.list_accounts()
+    # Pass offset-naive datetimes as filter
+    naive_from = datetime(2020, 1, 1)  # no tzinfo!
+    naive_to = datetime(2030, 1, 1)    # no tzinfo!
+
+    emails = provider.fetch_emails(
+        account_id=accounts[0].id,
+        folder_paths=["Posteingang"],
+        date_from=naive_from,
+        date_to=naive_to,
+    )
+    assert len(emails) > 0
+

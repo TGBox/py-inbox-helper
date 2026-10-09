@@ -67,3 +67,30 @@ def test_planned_action_serialization():
     assert restored.email_id == action.email_id
     assert restored.action_type == action.action_type
     assert restored.target_folder == action.target_folder
+
+
+def test_email_item_normalizes_naive_datetime_to_utc():
+    from py_inbox_helper.models import ensure_utc
+
+    naive_dt = datetime(2023, 6, 15, 14, 30, 0)  # No tzinfo
+    email = EmailItem(
+        id="item-naive",
+        entry_id="ENTRY-naive",
+        store_id="STORE-1",
+        account_name="user@example.com",
+        subject="Naive Date Test",
+        sender_name="Sender",
+        sender_email="sender@example.com",
+        received_time=naive_dt,
+    )
+
+    # EmailItem should automatically normalize to UTC
+    assert email.received_time.tzinfo is not None
+    assert email.received_time.tzinfo == timezone.utc
+
+    # ensure_utc helper directly
+    assert ensure_utc(None) is None
+    assert ensure_utc(naive_dt).tzinfo == timezone.utc
+    aware_dt = datetime(2023, 6, 15, 14, 30, 0, tzinfo=timezone.utc)
+    assert ensure_utc(aware_dt) == aware_dt
+

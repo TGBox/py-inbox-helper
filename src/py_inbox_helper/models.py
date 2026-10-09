@@ -32,6 +32,15 @@ class EmailCategory(str, Enum):
     JUNK = "JUNK"
 
 
+def ensure_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    """Ensures a datetime object is timezone-aware and normalized to UTC."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 @dataclass
 class EmailItem:
     """Represents an email item retrieved from a mailbox provider."""
@@ -52,6 +61,10 @@ class EmailItem:
     headers: Dict[str, str] = field(default_factory=dict)
     assigned_category: EmailCategory = EmailCategory.UNCLASSIFIED
     classification_reason: str = ""
+
+    def __post_init__(self):
+        if self.received_time is not None:
+            self.received_time = ensure_utc(self.received_time)
 
     @property
     def has_unsubscribe_header(self) -> bool:

@@ -15,7 +15,7 @@ import re
 from typing import Any, Callable, Dict, List, Optional
 import uuid
 
-from py_inbox_helper.models import EmailItem, ExecutionResult, PlannedAction
+from py_inbox_helper.models import EmailItem, ExecutionResult, PlannedAction, ensure_utc
 from py_inbox_helper.provider.base import AccountInfo, BaseMailProvider, FolderInfo
 
 logger = logging.getLogger(__name__)
@@ -269,6 +269,13 @@ class ImapMailProvider(BaseMailProvider):
 
                     if not received_time:
                         received_time = datetime.now(timezone.utc)
+                    else:
+                        received_time = ensure_utc(received_time)
+
+                    if date_from and received_time < (ensure_utc(date_from) or date_from):
+                        continue
+                    if date_to and received_time > (ensure_utc(date_to) or date_to):
+                        continue
 
                     is_read = b"\\Seen" in meta_info
 

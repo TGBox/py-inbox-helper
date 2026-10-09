@@ -122,3 +122,18 @@ def test_classify_vip_whitelist_sender():
     assert cat2 == EmailCategory.IMPORTANT_ACTION
     assert "Whitelist" in reason2
 
+
+def test_classify_offset_naive_datetime_does_not_fail():
+    """Verify that an offset-naive datetime (e.g. from Outlook COM) doesn't raise TypeError."""
+    analyzer = EmailAnalyzer(RuleConfig(archive_days_threshold=180))
+    # Explicitly create an email with offset-naive datetime
+    naive_dt = datetime(2021, 1, 1, 10, 0, 0)  # no tzinfo!
+    email = make_email(subject="Alte Notiz von 2021", days_ago=5)
+    # Even if somehow assigned directly as naive:
+    email.received_time = naive_dt
+
+    cat, reason = analyzer.classify(email)
+    assert cat == EmailCategory.ARCHIVE_OLD
+    assert "Alter" in reason or "Tage" in reason
+
+

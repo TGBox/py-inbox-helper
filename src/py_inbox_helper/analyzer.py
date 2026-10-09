@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 import re
 
-from py_inbox_helper.models import EmailCategory, EmailItem
+from py_inbox_helper.models import EmailCategory, EmailItem, ensure_utc
 
 
 @dataclass
@@ -111,7 +111,8 @@ class EmailAnalyzer(BaseEmailClassifier):
                 return EmailCategory.NOTIFICATION, f"Benachrichtigungs-Signal im Betreff: '{kw}'"
 
         # 7. Age-based Archiving
-        age_days = (datetime.now(timezone.utc) - email.received_time).days
+        recv_time = ensure_utc(email.received_time) or datetime.now(timezone.utc)
+        age_days = (datetime.now(timezone.utc) - recv_time).days
         if age_days >= self.config.archive_days_threshold:
             return EmailCategory.ARCHIVE_OLD, f"Alter der E-Mail beträgt {age_days} Tage (Schwelle: {self.config.archive_days_threshold} Tage)"
 

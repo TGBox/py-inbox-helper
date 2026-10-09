@@ -1,8 +1,12 @@
 # Changelog
 
+## SemVer v1.2.1
+
+- 2026-10-09 (c701c6d): fix bug with naive vs direct datetime values
+
 ## SemVer v1.2.0
 
-- 2026-10-09 (5d9702a): update and optimize gui layout
+- 2026-10-09 (5d960e6): update and optimize gui layout
 
 ## SemVer v1.1.0
 

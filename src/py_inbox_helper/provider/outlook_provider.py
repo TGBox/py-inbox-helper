@@ -7,7 +7,7 @@ from typing import Any, Callable, Dict, List, Optional
 import pythoncom
 import win32com.client
 
-from py_inbox_helper.models import EmailItem, ExecutionResult, PlannedAction
+from py_inbox_helper.models import EmailItem, ExecutionResult, PlannedAction, ensure_utc
 from py_inbox_helper.provider.base import AccountInfo, BaseMailProvider, FolderInfo
 
 logger = logging.getLogger(__name__)
@@ -172,15 +172,18 @@ class OutlookComProvider(BaseMailProvider):
                         # Convert PyTime/datetime
                         rt = item.ReceivedTime
                         if isinstance(rt, datetime):
-                            recv_time = rt
+                            recv_time = ensure_utc(rt)
                         else:
-                            recv_time = datetime(rt.year, rt.month, rt.day, rt.hour, rt.minute, rt.second, tzinfo=timezone.utc)
+                            recv_time = ensure_utc(datetime(rt.year, rt.month, rt.day, rt.hour, rt.minute, rt.second, tzinfo=timezone.utc))
                     except Exception:
                         recv_time = datetime.now(timezone.utc)
 
-                    if date_from and recv_time < date_from:
+                    if recv_time is None:
+                        recv_time = datetime.now(timezone.utc)
+
+                    if date_from and recv_time < (ensure_utc(date_from) or date_from):
                         continue
-                    if date_to and recv_time > date_to:
+                    if date_to and recv_time > (ensure_utc(date_to) or date_to):
                         continue
 
                     # Parse headers for List-Unsubscribe
