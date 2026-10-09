@@ -104,21 +104,10 @@ class MainWindow(QMainWindow):
 
         header_layout.addStretch()
 
-        # Provider Selector
-        prov_label = QLabel("Provider:")
+        # Provider / Account Selector
+        prov_label = QLabel("Konto / Provider:")
         prov_label.setStyleSheet("color: #94a3b8; font-size: 12px;")
         self.provider_combo = QComboBox()
-        self.provider_combo.addItem("Microsoft Outlook (Desktop)", "OUTLOOK")
-        self.provider_combo.addItem("Generisches IMAP-Konto", "IMAP")
-        self.provider_combo.addItem("Demo-Modus (Mock Postfach)", "MOCK")
-
-        if isinstance(self.provider, OutlookComProvider):
-            self.provider_combo.setCurrentIndex(0)
-        elif isinstance(self.provider, ImapMailProvider):
-            self.provider_combo.setCurrentIndex(1)
-        else:
-            self.provider_combo.setCurrentIndex(2)
-
         self.provider_combo.currentIndexChanged.connect(self._on_provider_mode_changed)
         header_layout.addWidget(prov_label)
         header_layout.addWidget(self.provider_combo)
@@ -143,13 +132,15 @@ class MainWindow(QMainWindow):
         self.protocol_tab = ProtocolTab()
         self.backup_tab = BackupTab(self.backup_manager)
 
-        self.tabs.addTab(self.scan_tab, "1. Postfach & Scan")
-        self.tabs.addTab(self.analysis_tab, "2. Analyse & Filter")
-        self.tabs.addTab(self.rules_tab, "3. Regeln & Aktionen")
-        self.tabs.addTab(self.protocol_tab, "4. Dry-Run & Protokoll")
-        self.tabs.addTab(self.backup_tab, "5. Backup & Rollback")
+        self.tabs.addTab(self.scan_tab, "1. Postfach && Scan")
+        self.tabs.addTab(self.analysis_tab, "2. Analyse && Filter")
+        self.tabs.addTab(self.rules_tab, "3. Regeln && Aktionen")
+        self.tabs.addTab(self.protocol_tab, "4. Dry-Run && Protokoll")
+        self.tabs.addTab(self.backup_tab, "5. Backup && Rollback")
 
         main_layout.addWidget(self.tabs)
+
+        self._refresh_provider_combo()
 
         # Wire Tab Signals
         self.scan_tab.start_scan_requested.connect(self._start_scan)
@@ -192,16 +183,75 @@ class MainWindow(QMainWindow):
             self.showNormal()
             self.fullscreen_btn.setText("Vollbild (F11)")
 
-    def _open_settings(self):
-        dialog = SettingsDialog(self.ai_config, self.analyzer, self.imap_manager, self)
+    def _refresh_provider_combo(self, select_profile_id: Optional[str] = None):
+        """Populates header dropdown with configured accounts and providers."""
+        self.provider_combo.blockSignals(True)
+        self.provider_combo.clear()
+
+        # 1. Outlook
+        self.provider_combo.addItem("Microsoft Outlook (Desktop)", ("OUTLOOK", None))
+
+        # 2. Configured IMAP profiles
+        profiles = self.imap_manager.list_profiles()
+        for p in profiles:
+            display_name = f"IMAP: {p.account_name} ({p.username or p.host})"
+            self.provider_combo.addItem(display_name, ("IMAP", p.profile_id))
+
+        # 3. Add new IMAP option
+        self.provider_combo.addItem("+ Neues IMAP-Konto einrichten...", ("ADD_IMAP", None))
+
+        # 4. Demo Mock option
+        self.provider_combo.addItem("Demo-Modus (Mock Postfach)", ("MOCK", None))
+
+        # Determine index to select
+        target_idx = 0
+        if select_profile_id:
+            for idx in range(self.provider_combo.count()):
+                data = self.provider_combo.itemData(idx)
+                if data and data[0] == "IMAP" and data[1] == select_profile_id:
+                    target_idx = idx
+                    break
+        elif isinstance(self.provider, OutlookComProvider):
+            target_idx = 0
+        elif isinstance(self.provider, ImapMailProvider):
+            found = False
+            for idx in range(self.provider_combo.count()):
+                data = self.provider_combo.itemData(idx)
+                if data and data[0] == "IMAP":
+                    target_idx = idx
+                    found = True
+                    break
+            if not found:
+                target_idx = self.provider_combo.count() - 1
+        else:
+            target_idx = self.provider_combo.count() - 1
+
+        self.provider_combo.setCurrentIndex(target_idx)
+        self.provider_combo.blockSignals(False)
+
+    def _open_settings(self, initial_tab: int = 0):
+        dialog = SettingsDialog(self.ai_config, self.analyzer, self.imap_manager, self, initial_tab=initial_tab)
         if dialog.exec():
             self.ai_client.config = self.ai_config
+            self._refresh_provider_combo()
+            if isinstance(self.provider, ImapMailProvider):
+                self.scan_tab.reload_accounts()
             if self.current_emails:
                 self.analyzer.analyze_batch(self.current_emails)
                 self.analysis_tab.set_emails(self.current_emails)
+        else:
+            self._refresh_provider_combo()
 
     def _on_provider_mode_changed(self, index: int):
-        mode = self.provider_combo.currentData()
+        data = self.provider_combo.currentData()
+        if not data:
+            return
+        mode, profile_id = data
+
+        if mode == "ADD_IMAP":
+            self._open_settings(initial_tab=1)
+            return
+
         if mode == "OUTLOOK":
             outlook = OutlookComProvider()
             if not outlook.is_available():
@@ -211,24 +261,19 @@ class MainWindow(QMainWindow):
                     "Microsoft Outlook konnte über COM nicht erreicht werden.\n"
                     "Wechsel zurück zum vorherigen Modus.",
                 )
-                self.provider_combo.setCurrentIndex(2)
+                self._refresh_provider_combo()
                 return
             self.provider = outlook
+            self.scan_tab.provider = self.provider
+            self.scan_tab.reload_accounts()
         elif mode == "IMAP":
-            profiles = self.imap_manager.list_profiles()
-            if not profiles:
-                QMessageBox.information(
-                    self,
-                    "Kein IMAP-Konto eingerichtet",
-                    "Es ist noch kein IMAP-Konto eingerichtet. Bitte richte jetzt ein Konto in den Einstellungen ein.",
-                )
-                self._open_settings()
             self.provider = ImapMailProvider(self.imap_manager)
+            self.scan_tab.provider = self.provider
+            self.scan_tab.reload_accounts(select_id=profile_id)
         else:
             self.provider = MockMailProvider()
-
-        self.scan_tab.provider = self.provider
-        self.scan_tab.reload_accounts()
+            self.scan_tab.provider = self.provider
+            self.scan_tab.reload_accounts()
 
     # --- VIP Whitelist & AI Handlers ---
     def _add_to_whitelist(self, sender: str):

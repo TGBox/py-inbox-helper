@@ -131,3 +131,82 @@ def test_main_window_granular_restore_flow(qapp, tmp_path: Path):
     assert len(results) == 1
     assert results[0]["success"] is True
 
+
+def test_ui_interactive_resizing_and_labels(qapp, tmp_path: Path):
+    from PySide6.QtWidgets import QHeaderView
+    mock_provider = MockMailProvider()
+    window = MainWindow(provider=mock_provider)
+    window.backup_manager.backup_dir = tmp_path
+
+    # Check button text in ProtocolTab
+    assert "im Postfach anwenden" in window.protocol_tab.apply_btn.text()
+    assert "in Outlook" not in window.protocol_tab.apply_btn.text()
+
+    # Check interactive resize modes on tables (columns & rows)
+    assert window.analysis_tab.table.horizontalHeader().sectionResizeMode(0) == QHeaderView.Interactive
+    window.analysis_tab.table.setRowCount(1)
+    assert window.analysis_tab.table.verticalHeader().sectionResizeMode(0) == QHeaderView.Interactive
+    assert window.protocol_tab.table.horizontalHeader().sectionResizeMode(1) == QHeaderView.Interactive
+    assert window.rules_tab.table.horizontalHeader().sectionResizeMode(1) == QHeaderView.Interactive
+    assert window.backup_tab.table.horizontalHeader().sectionResizeMode(0) == QHeaderView.Interactive
+
+
+def test_ui_dynamic_account_dropdown_and_folder_display(qapp, tmp_path: Path):
+    from py_inbox_helper.provider.imap_provider import ImapConfig, ImapMailProvider, ImapProfileManager
+    from py_inbox_helper.provider.base import FolderInfo
+
+    profile_mgr = ImapProfileManager(config_path=tmp_path / "imap_profiles.json")
+    profile = ImapConfig(
+        profile_id="prof-custom-1",
+        account_name="Mein Privates Postfach",
+        host="imap.example.com",
+        username="daniel@example.de",
+    )
+    profile_mgr.save_profile(profile)
+
+    window = MainWindow(provider=MockMailProvider())
+    window.imap_manager = profile_mgr
+    window._refresh_provider_combo()
+
+    # Verify combo contains the configured account
+    combo_texts = [window.provider_combo.itemText(i) for i in range(window.provider_combo.count())]
+    assert any("Mein Privates Postfach" in t for t in combo_texts)
+
+    # Mock provider list_folders with RFC 3501 UTF-7 folder name
+    mock_imap = ImapMailProvider(profile_manager=profile_mgr)
+    window.scan_tab.provider = mock_imap
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(mock_imap, "list_folders", lambda aid: [
+            FolderInfo(id="INBOX", name="Posteingang", path="INBOX", is_inbox=True),
+            FolderInfo(id="Entw&APw-rfe", name="Entwürfe", path="Entw&APw-rfe"),
+            FolderInfo(id="Gel&APY-scht", name="Gelöscht", path="Gel&APY-scht"),
+        ])
+        window.scan_tab._load_folders_for_account("prof-custom-1")
+
+        folder_items = [window.scan_tab.folder_list.item(i).text() for i in range(window.scan_tab.folder_list.count())]
+        assert any("Entwürfe" in it for it in folder_items)
+        assert any("Gelöscht" in it for it in folder_items)
+        assert not any("Entw&APw-rfe" in it for it in folder_items)
+
+
+def test_settings_dialog_initialization(qapp, tmp_path: Path):
+    from py_inbox_helper.ui.settings_dialog import SettingsDialog
+    from py_inbox_helper.ai import AiConfig
+    from py_inbox_helper.analyzer import EmailAnalyzer
+    from py_inbox_helper.provider.imap_provider import ImapProfileManager
+
+    ai_cfg = AiConfig()
+    analyzer = EmailAnalyzer()
+    mgr = ImapProfileManager(config_path=tmp_path / "imap_profiles.json")
+
+    # Open on tab 0
+    dialog = SettingsDialog(ai_cfg, analyzer, mgr, initial_tab=0)
+    assert dialog.tabs.count() == 3
+    assert dialog.tabs.currentIndex() == 0
+
+    # Open on tab 1 (IMAP accounts)
+    dialog_imap = SettingsDialog(ai_cfg, analyzer, mgr, initial_tab=1)
+    assert dialog_imap.tabs.currentIndex() == 1
+
+
+

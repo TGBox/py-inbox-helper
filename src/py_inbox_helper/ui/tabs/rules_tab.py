@@ -39,14 +39,14 @@ class RulesTab(QWidget):
         # Header description
         info_label = QLabel(
             "Passe hier die automatischen Aktionen für jede erkannte Kategorie an.\n"
-            "Zielordner werden bei Bedarf automatisch in Outlook angelegt. "
+            "Zielordner werden bei Bedarf automatisch im Postfach angelegt. "
             "Aktionen werden erst nach dem Dry-Run und deiner ausdrücklichen Bestätigung ausgeführt."
         )
         info_label.setStyleSheet("color: #94a3b8; font-size: 13px;")
         layout.addWidget(info_label)
 
         # Rules Table
-        rules_box = QGroupBox("Kategorie-Regeln & Zielordner-Presets")
+        rules_box = QGroupBox("Kategorie-Regeln && Zielordner-Presets")
         r_layout = QVBoxLayout(rules_box)
 
         self.table = QTableWidget()
@@ -54,11 +54,14 @@ class RulesTab(QWidget):
         self.table.setHorizontalHeaderLabels([
             "Kategorie", "Zielordner", "Als gelesen", "Jahres-Unterordner", "Newsletter abmelden"
         ])
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.table.verticalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.table.setColumnWidth(0, 180)
+        self.table.setColumnWidth(1, 240)
+        self.table.setColumnWidth(2, 110)
+        self.table.setColumnWidth(3, 150)
+        self.table.setColumnWidth(4, 150)
+        self.table.horizontalHeader().setStretchLastSection(True)
 
         self._populate_table()
         r_layout.addWidget(self.table)

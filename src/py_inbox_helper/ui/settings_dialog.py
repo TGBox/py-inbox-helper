@@ -36,18 +36,20 @@ class SettingsDialog(QDialog):
         analyzer: EmailAnalyzer,
         imap_manager: ImapProfileManager,
         parent: Optional[QWidget] = None,
+        initial_tab: int = 0,
     ):
         super().__init__(parent)
-        self.setWindowTitle("Einstellungen - KI, IMAP & Whitelist")
+        self.setWindowTitle("Einstellungen - KI, IMAP && Whitelist")
         self.resize(550, 480)
         self.ai_config = ai_config
         self.analyzer = analyzer
         self.imap_manager = imap_manager
+        self.initial_tab = initial_tab
         self._init_ui()
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
-        tabs = QTabWidget()
+        self.tabs = QTabWidget()
 
         # TAB 1: AI Configuration
         ai_tab = QWidget()
@@ -84,7 +86,7 @@ class SettingsDialog(QDialog):
         ai_test_row.addWidget(self.ai_status_label, 1)
         ai_layout.addLayout(ai_test_row)
         ai_layout.addStretch()
-        tabs.addTab(ai_tab, "KI / LLM (Ollama)")
+        self.tabs.addTab(ai_tab, "KI / LLM (Ollama)")
 
         # TAB 2: IMAP Profiles
         imap_tab = QWidget()
@@ -127,7 +129,7 @@ class SettingsDialog(QDialog):
         if_layout.addRow("", add_imap_btn)
 
         imap_layout.addWidget(imap_form_box)
-        tabs.addTab(imap_tab, "IMAP-Konten")
+        self.tabs.addTab(imap_tab, "IMAP-Konten")
 
         # TAB 3: VIP & Whitelist
         wl_tab = QWidget()
@@ -141,13 +143,14 @@ class SettingsDialog(QDialog):
         current_wl = "\n".join(self.analyzer.config.whitelist_senders)
         self.whitelist_edit.setText(current_wl)
         wl_layout.addWidget(self.whitelist_edit)
-        tabs.addTab(wl_tab, "VIP & Whitelist")
+        self.tabs.addTab(wl_tab, "VIP && Whitelist")
 
-        layout.addWidget(tabs)
+        self.tabs.setCurrentIndex(self.initial_tab)
+        layout.addWidget(self.tabs)
 
         # Bottom Buttons
         btn_row = QHBoxLayout()
-        save_btn = QPushButton("Speichern & Schließen")
+        save_btn = QPushButton("Speichern && Schließen")
         save_btn.setObjectName("primaryBtn")
         save_btn.clicked.connect(self._save_all_and_close)
         cancel_btn = QPushButton("Abbrechen")

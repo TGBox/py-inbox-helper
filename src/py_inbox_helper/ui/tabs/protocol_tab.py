@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -63,6 +64,9 @@ class ProtocolTab(QWidget):
         header_row.addWidget(self.simulate_btn)
         layout.addLayout(header_row)
 
+        # Resizable Splitter for Table and Bottom Safety Area
+        splitter = QSplitter(Qt.Vertical)
+
         # 2. Table of actions
         table_box = QGroupBox("Änderungsprotokoll der geplanten Aktionen")
         t_layout = QVBoxLayout(table_box)
@@ -72,16 +76,25 @@ class ProtocolTab(QWidget):
         self.table.setHorizontalHeaderLabels([
             "Aktiv", "Betreff", "Zielordner", "Gelesen", "Abmelden", "Simulations-Ergebnis"
         ])
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch)
-        t_layout.addWidget(self.table)
-        layout.addWidget(table_box)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.table.verticalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.table.setColumnWidth(0, 50)   # Aktiv Checkbox
+        self.table.setColumnWidth(1, 280)  # Betreff
+        self.table.setColumnWidth(2, 160)  # Zielordner
+        self.table.setColumnWidth(3, 80)   # Gelesen
+        self.table.setColumnWidth(4, 90)   # Abmelden
+        self.table.setColumnWidth(5, 260)  # Simulations-Ergebnis
+        self.table.horizontalHeader().setStretchLastSection(True)
 
-        # 3. Export Buttons
+        t_layout.addWidget(self.table)
+        splitter.addWidget(table_box)
+
+        # 3. Bottom controls widget (Exports & Safety Confirmation)
+        bottom_widget = QWidget()
+        b_layout = QVBoxLayout(bottom_widget)
+        b_layout.setContentsMargins(0, 0, 0, 0)
+        b_layout.setSpacing(10)
+
         export_row = QHBoxLayout()
         self.export_html_btn = QPushButton("Änderungsprotokoll als HTML exportieren")
         self.export_html_btn.clicked.connect(self._export_html)
@@ -91,26 +104,29 @@ class ProtocolTab(QWidget):
         export_row.addWidget(self.export_html_btn)
         export_row.addWidget(self.export_json_btn)
         export_row.addStretch()
-        layout.addLayout(export_row)
+        b_layout.addLayout(export_row)
 
         # 4. Safety Notice Box
-        safety_box = QGroupBox("Sicherheitsnetz & Bestätigung")
+        safety_box = QGroupBox("Sicherheitsnetz && Bestätigung")
         s_layout = QVBoxLayout(safety_box)
         safety_text = QLabel(
             "Vor der Ausführung wird automatisch ein vollständiger Wiederherstellungspunkt gesichert.\n"
-            "Es werden keine E-Mails permanent vernichtet (Löschen verschiebt in den Outlook-Papierkorb).\n"
-            "Alle Änderungen können bei Bedarf im Tab 'Wiederherstellung' per 1-Klick rückgängig gemacht werden."
+            "Es werden keine E-Mails permanent vernichtet (Löschen verschiebt in den Papierkorb des Postfachs).\n"
+            "Alle Änderungen können bei Bedarf im Tab 'Backup && Rollback' per 1-Klick rückgängig gemacht werden."
         )
         safety_text.setStyleSheet("color: #38bdf8; font-size: 12px;")
         s_layout.addWidget(safety_text)
 
-        self.apply_btn = QPushButton("Änderungen jetzt verbindlich in Outlook anwenden")
+        self.apply_btn = QPushButton("Änderungen jetzt verbindlich im Postfach anwenden")
         self.apply_btn.setObjectName("successBtn")
         self.apply_btn.setFixedHeight(44)
         self.apply_btn.clicked.connect(self._confirm_and_apply)
         s_layout.addWidget(self.apply_btn)
 
-        layout.addWidget(safety_box)
+        b_layout.addWidget(safety_box)
+        splitter.addWidget(bottom_widget)
+        splitter.setSizes([380, 160])
+        layout.addWidget(splitter)
 
     def set_simulation_results(self, plan: ActionPlan, results: List[ExecutionResult]):
         self._current_plan = plan

@@ -1,14 +1,17 @@
 """Generic IMAP mail provider supporting Gmail, GMX, Web.de and custom servers."""
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import email
 from email.header import decode_header
+from email.utils import parseaddr, parsedate_to_datetime
 import imaplib
 import json
 import logging
 from pathlib import Path
+import re
 from typing import Any, Callable, Dict, List, Optional
 import uuid
 
@@ -16,6 +19,32 @@ from py_inbox_helper.models import EmailItem, ExecutionResult, PlannedAction
 from py_inbox_helper.provider.base import AccountInfo, BaseMailProvider, FolderInfo
 
 logger = logging.getLogger(__name__)
+
+
+def decode_imap_utf7(s: str) -> str:
+    """Decodes an IMAP modified UTF-7 string according to RFC 3501 Section 5.1.3."""
+    if not s:
+        return ""
+
+    def _replace(match: re.Match) -> str:
+        b64_str = match.group(1)
+        if not b64_str:
+            # "&-" represents literal "&"
+            return "&"
+        # In modified UTF-7, comma replaces slash
+        std_b64 = b64_str.replace(",", "/")
+        # Pad with '=' to multiple of 4
+        rem = len(std_b64) % 4
+        if rem != 0:
+            std_b64 += "=" * (4 - rem)
+        try:
+            raw_bytes = base64.b64decode(std_b64)
+            return raw_bytes.decode("utf-16-be")
+        except Exception:
+            return match.group(0)
+
+    # Match &...- where ... is empty or base64 characters with comma instead of slash
+    return re.sub(r"&([A-Za-z0-9+,]*)-", _replace, s)
 
 
 @dataclass
@@ -134,16 +163,20 @@ class ImapMailProvider(BaseMailProvider):
             if status == "OK" and raw_folders:
                 for line in raw_folders:
                     if isinstance(line, bytes):
-                        line_str = line.decode("utf-8", errors="replace")
-                        # Format is typically: (\\Flags) "/" "FolderName"
-                        parts = line_str.split(' "/" ')
-                        name = parts[-1].strip('"') if len(parts) > 1 else line_str
-                        is_inbox = "inbox" in name.lower() or "posteingang" in name.lower()
+                        line_str = line.decode("latin1", errors="replace")
+                        match = re.search(r'\((?P<flags>[^)]*)\)\s+(?:"(?P<delim>[^"]+)"|NIL)\s+(?P<name>.*)$', line_str)
+                        if match:
+                            raw_name = match.group("name").strip().strip('"')
+                        else:
+                            parts = line_str.split(' "/" ')
+                            raw_name = parts[-1].strip().strip('"') if len(parts) > 1 else line_str
+                        decoded_name = decode_imap_utf7(raw_name)
+                        is_inbox = "inbox" in decoded_name.lower() or "posteingang" in decoded_name.lower()
                         folders.append(
                             FolderInfo(
-                                id=name,
-                                name=name,
-                                path=name,
+                                id=raw_name,
+                                name=decoded_name,
+                                path=raw_name,
                                 is_inbox=is_inbox,
                             )
                         )
@@ -184,28 +217,67 @@ class ImapMailProvider(BaseMailProvider):
                     if max_count and len(emails) >= max_count:
                         break
 
-                    res, msg_data = client.fetch(mid, "(RFC822.HEADER RFC822.SIZE FLAGS)")
+                    res, msg_data = client.fetch(mid, "(RFC822.HEADER RFC822.SIZE INTERNALDATE FLAGS)")
                     if res != "OK":
                         continue
 
                     raw_header = b""
-                    size_bytes = 0
-                    flags = b""
+                    meta_info = b""
                     for part in msg_data:
                         if isinstance(part, tuple):
+                            meta_info += part[0] + b" "
                             raw_header = part[1]
                         elif isinstance(part, bytes):
-                            flags = part
+                            meta_info += part + b" "
 
                     msg = email.message_from_bytes(raw_header)
                     subject = self._decode_mime_str(msg.get("Subject", "(Kein Betreff)"))
-                    sender = self._decode_mime_str(msg.get("From", ""))
-                    is_read = b"\\Seen" in flags
+
+                    raw_from = msg.get("From", "")
+                    name_raw, addr_raw = parseaddr(raw_from)
+                    decoded_sender_name = self._decode_mime_str(name_raw).strip()
+                    decoded_sender_email = self._decode_mime_str(addr_raw).strip()
+                    if not decoded_sender_name and not decoded_sender_email:
+                        decoded_sender_name = self._decode_mime_str(raw_from).strip() or "(Unbekannt)"
+                        decoded_sender_email = decoded_sender_name
+                    elif not decoded_sender_name:
+                        decoded_sender_name = decoded_sender_email
+                    elif not decoded_sender_email:
+                        decoded_sender_email = decoded_sender_name
+
+                    size_bytes = 0
+                    meta_str = meta_info.decode("latin1", errors="replace")
+                    size_match = re.search(r'RFC822\.SIZE\s+(\d+)', meta_str, re.IGNORECASE)
+                    if size_match:
+                        size_bytes = int(size_match.group(1))
+
+                    received_time: Optional[datetime] = None
+                    date_header = msg.get("Date")
+                    if date_header:
+                        try:
+                            received_time = parsedate_to_datetime(date_header)
+                        except Exception:
+                            received_time = None
+
+                    if not received_time:
+                        internal_match = re.search(r'INTERNALDATE\s+"([^"]+)"', meta_str, re.IGNORECASE)
+                        if internal_match:
+                            try:
+                                received_time = parsedate_to_datetime(internal_match.group(1))
+                            except Exception:
+                                received_time = None
+
+                    if not received_time:
+                        received_time = datetime.now(timezone.utc)
+
+                    is_read = b"\\Seen" in meta_info
 
                     # Extract Headers
                     headers_dict = {}
                     for h_key in msg.keys():
                         headers_dict[h_key] = msg.get(h_key, "")
+
+                    decoded_folder_display = decode_imap_utf7(folder)
 
                     item = EmailItem(
                         id=f"{account_id}_{folder}_{mid.decode()}",
@@ -213,12 +285,12 @@ class ImapMailProvider(BaseMailProvider):
                         store_id=account_id,
                         account_name=profile.account_name,
                         subject=subject,
-                        sender_name=sender,
-                        sender_email=sender,
-                        received_time=datetime.now(timezone.utc),
+                        sender_name=decoded_sender_name,
+                        sender_email=decoded_sender_email,
+                        received_time=received_time,
                         body_preview=subject,
                         is_read=is_read,
-                        folder_path=folder,
+                        folder_path=decoded_folder_display,
                         size_bytes=size_bytes,
                         headers=headers_dict,
                     )

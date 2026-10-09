@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSpinBox,
+    QSplitter,
     QVBoxLayout,
     QWidget,
 )
@@ -42,7 +43,7 @@ class ScanTab(QWidget):
         layout.setContentsMargins(20, 20, 20, 20)
 
         # 1. Account Selection Box
-        account_box = QGroupBox("1. Postfach & E-Mail-Konto auswählen")
+        account_box = QGroupBox("1. Postfach && E-Mail-Konto auswählen")
         acc_layout = QVBoxLayout(account_box)
 
         acc_row = QHBoxLayout()
@@ -62,6 +63,9 @@ class ScanTab(QWidget):
         acc_layout.addWidget(self.account_info_label)
         layout.addWidget(account_box)
 
+        # Resizable Splitter for Panels (Folders & Filters)
+        panels_splitter = QSplitter(Qt.Vertical)
+
         # 2. Folder Selection Box
         folder_box = QGroupBox("2. Zu analysierende Ordner")
         folder_layout = QVBoxLayout(folder_box)
@@ -78,12 +82,12 @@ class ScanTab(QWidget):
         folder_layout.addLayout(folder_actions)
 
         self.folder_list = QListWidget()
-        self.folder_list.setMaximumHeight(150)
+        self.folder_list.setMinimumHeight(110)
         folder_layout.addWidget(self.folder_list)
-        layout.addWidget(folder_box)
+        panels_splitter.addWidget(folder_box)
 
         # 3. Filter Options
-        filter_box = QGroupBox("3. Filter & Umfang")
+        filter_box = QGroupBox("3. Filter && Umfang")
         filter_form = QFormLayout(filter_box)
 
         self.time_filter_combo = QComboBox()
@@ -122,7 +126,9 @@ class ScanTab(QWidget):
         self.limit_spin.setSpecialValueText("Keine Begrenzung (Alle)")
         filter_form.addRow("Max. E-Mails:", self.limit_spin)
 
-        layout.addWidget(filter_box)
+        panels_splitter.addWidget(filter_box)
+        panels_splitter.setSizes([220, 180])
+        layout.addWidget(panels_splitter)
 
         # 4. Action / Progress
         action_row = QHBoxLayout()
@@ -153,17 +159,21 @@ class ScanTab(QWidget):
         layout.addStretch()
         self.reload_accounts()
 
-    def reload_accounts(self):
-        """Loads accounts from the provider."""
+    def reload_accounts(self, select_id: Optional[str] = None):
+        """Loads accounts from the provider and optionally preselects a given account id."""
         self.account_combo.clear()
         try:
             self._accounts = self.provider.list_accounts()
-            for acc in self._accounts:
+            selected_idx = 0
+            for idx, acc in enumerate(self._accounts):
                 suffix = " (Standard)" if acc.is_default else ""
                 self.account_combo.addItem(f"{acc.name}{suffix}", acc.id)
+                if select_id and acc.id == select_id:
+                    selected_idx = idx
             if self._accounts:
+                self.account_combo.setCurrentIndex(selected_idx)
                 self.account_info_label.setText(f"{len(self._accounts)} Konto/Postfächer gefunden.")
-                self._load_folders_for_account(self._accounts[0].id)
+                self._load_folders_for_account(self._accounts[selected_idx].id)
             else:
                 self.account_info_label.setText("Keine Konten gefunden.")
         except Exception as ex:
@@ -179,7 +189,8 @@ class ScanTab(QWidget):
         try:
             folders = self.provider.list_folders(account_id)
             for f in folders:
-                item = QListWidgetItem(f"{f.path} ({f.item_count} Mails)")
+                # Use f.name for decoded German characters display, keep f.path in data
+                item = QListWidgetItem(f"{f.name} ({f.item_count} Mails)")
                 item.setData(Qt.UserRole, f.path)
                 item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
                 if f.is_inbox:

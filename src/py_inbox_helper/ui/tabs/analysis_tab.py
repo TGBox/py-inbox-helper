@@ -83,8 +83,8 @@ class AnalysisTab(QWidget):
         kpi_grid.setSpacing(12)
 
         self.card_total = MetricCard("Analysiert Gesamt", "#38bdf8")
-        self.card_newsletter = MetricCard("Newsletter & Promo", "#a855f7")
-        self.card_invoices = MetricCard("Rechnungen & Finanzen", "#10b981")
+        self.card_newsletter = MetricCard("Newsletter && Promo", "#a855f7")
+        self.card_invoices = MetricCard("Rechnungen && Finanzen", "#10b981")
         self.card_notifications = MetricCard("Benachrichtigungen", "#64748b")
         self.card_important = MetricCard("Wichtig / Aktion", "#f59e0b")
         self.card_resubmission = MetricCard("Wiedervorlage", "#06b6d4")
@@ -109,7 +109,7 @@ class AnalysisTab(QWidget):
         self.view_emails_btn.setChecked(True)
         self.view_emails_btn.clicked.connect(lambda: self._switch_sub_view(0))
 
-        self.view_clusters_btn = QPushButton("Top-Absender & Speicher-Cluster")
+        self.view_clusters_btn = QPushButton("Top-Absender && Speicher-Cluster")
         self.view_clusters_btn.setCheckable(True)
         self.view_clusters_btn.clicked.connect(lambda: self._switch_sub_view(1))
 
@@ -166,13 +166,18 @@ class AnalysisTab(QWidget):
         self.table.setHorizontalHeaderLabels([
             "Betreff", "Absender", "Empfangen", "Größe", "Kategorie", "Grund / Signal", "Abmeldung"
         ])
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents)
+        # Interactive column & row resizing
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.table.verticalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.table.setColumnWidth(0, 260)  # Betreff
+        self.table.setColumnWidth(1, 240)  # Absender
+        self.table.setColumnWidth(2, 130)  # Empfangen
+        self.table.setColumnWidth(3, 85)   # Größe
+        self.table.setColumnWidth(4, 130)  # Kategorie
+        self.table.setColumnWidth(5, 230)  # Grund / Signal
+        self.table.setColumnWidth(6, 140)  # Abmeldung
+        self.table.horizontalHeader().setStretchLastSection(True)
+
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setSelectionMode(QTableWidget.ExtendedSelection)  # Multi-select support
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -181,7 +186,7 @@ class AnalysisTab(QWidget):
         splitter.addWidget(self.table)
 
         # Preview Panel with AI Summarize Button
-        preview_box = QGroupBox("Detailansicht, Vorschau & KI-Assistent")
+        preview_box = QGroupBox("Detailansicht, Vorschau && KI-Assistent")
         prev_layout = QVBoxLayout(preview_box)
         prev_layout.setContentsMargins(10, 8, 10, 8)
 
@@ -195,7 +200,7 @@ class AnalysisTab(QWidget):
 
         self.preview_text = QTextEdit()
         self.preview_text.setReadOnly(True)
-        self.preview_text.setMaximumHeight(150)
+        self.preview_text.setMinimumHeight(80)
         self.preview_text.setPlaceholderText("Wähle eine E-Mail aus der Tabelle für Details...")
         prev_layout.addWidget(self.preview_text)
         splitter.addWidget(preview_box)
@@ -219,11 +224,14 @@ class AnalysisTab(QWidget):
         self.cluster_table.setHorizontalHeaderLabels([
             "Absender-Adresse", "Name", "E-Mail-Anzahl", "Ungelesen", "Gesamtgröße"
         ])
-        self.cluster_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.cluster_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        self.cluster_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        self.cluster_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        self.cluster_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        self.cluster_table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.cluster_table.verticalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.cluster_table.setColumnWidth(0, 250)
+        self.cluster_table.setColumnWidth(1, 200)
+        self.cluster_table.setColumnWidth(2, 120)
+        self.cluster_table.setColumnWidth(3, 100)
+        self.cluster_table.setColumnWidth(4, 120)
+        self.cluster_table.horizontalHeader().setStretchLastSection(True)
         self.cluster_table.setSelectionBehavior(QTableWidget.SelectRows)
         cv_layout.addWidget(self.cluster_table)
 
@@ -307,7 +315,10 @@ class AnalysisTab(QWidget):
             self.table.setItem(row, 0, sub_item)
 
             # Sender
-            sender_str = f"{e.sender_name} <{e.sender_email}>" if e.sender_name else e.sender_email
+            if e.sender_name and e.sender_email and e.sender_name != e.sender_email:
+                sender_str = f"{e.sender_name} <{e.sender_email}>"
+            else:
+                sender_str = e.sender_email or e.sender_name or "(Unbekannt)"
             self.table.setItem(row, 1, QTableWidgetItem(sender_str))
 
             # Date

@@ -42,8 +42,11 @@ class BackupTab(QWidget):
         layout.setSpacing(14)
         layout.setContentsMargins(20, 20, 20, 20)
 
+        # Outer Splitter for Live-Protokoll vs Backups
+        main_splitter = QSplitter(Qt.Vertical)
+
         # 1. Live Execution Status Box
-        exec_box = QGroupBox("Ausführungsstatus & Live-Protokoll")
+        exec_box = QGroupBox("Ausführungsstatus && Live-Protokoll")
         e_layout = QVBoxLayout(exec_box)
 
         self.progress_bar = QProgressBar()
@@ -58,10 +61,10 @@ class BackupTab(QWidget):
 
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
-        self.log_text.setMaximumHeight(100)
+        self.log_text.setMinimumHeight(60)
         self.log_text.setPlaceholderText("Echtzeit-Protokoll der ausgeführten Aktionen...")
         e_layout.addWidget(self.log_text)
-        layout.addWidget(exec_box)
+        main_splitter.addWidget(exec_box)
 
         # 2. Main Backups Splitter: Snapshot List & Snapshot Detail Items
         splitter = QSplitter(Qt.Vertical)
@@ -82,10 +85,14 @@ class BackupTab(QWidget):
         self.table.setHorizontalHeaderLabels([
             "Snapshot-ID", "Erstellt am", "Konto", "Gesicherte E-Mails"
         ])
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.table.verticalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.table.setColumnWidth(0, 220)
+        self.table.setColumnWidth(1, 160)
+        self.table.setColumnWidth(2, 160)
+        self.table.setColumnWidth(3, 140)
+        self.table.horizontalHeader().setStretchLastSection(True)
+
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.itemSelectionChanged.connect(self._on_snapshot_selected)
         sb_layout.addWidget(self.table)
@@ -100,11 +107,20 @@ class BackupTab(QWidget):
         self.items_table.setHorizontalHeaderLabels([
             "Auswahl", "Betreff", "Ursprünglicher Ordner", "Gelesen-Status"
         ])
-        self.items_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        self.items_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.items_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        self.items_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.items_table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.items_table.verticalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.items_table.setColumnWidth(0, 60)
+        self.items_table.setColumnWidth(1, 280)
+        self.items_table.setColumnWidth(2, 180)
+        self.items_table.setColumnWidth(3, 120)
+        self.items_table.horizontalHeader().setStretchLastSection(True)
+
         ib_layout.addWidget(self.items_table)
+        splitter.addWidget(items_box)
+
+        main_splitter.addWidget(splitter)
+        main_splitter.setSizes([130, 370])
+        layout.addWidget(main_splitter)
 
         # Restore Action Buttons
         restore_row = QHBoxLayout()
