@@ -209,4 +209,117 @@ def test_settings_dialog_initialization(qapp, tmp_path: Path):
     assert dialog_imap.tabs.currentIndex() == 1
 
 
+def test_analysis_tab_kpi_card_filter_and_active_state(qapp, tmp_path: Path):
+    mock_provider = MockMailProvider()
+    window = MainWindow(provider=mock_provider)
+    window.backup_manager.backup_dir = tmp_path
+
+    emails = mock_provider.fetch_emails("acc-1", ["Posteingang"])
+    analyzed = window.analyzer.analyze_batch(emails)
+    window._on_scan_finished(analyzed)
+
+    analysis_tab = window.analysis_tab
+
+    # Verify initial cards state (Gesamt card active)
+    assert analysis_tab.card_total.is_active is True
+    assert analysis_tab.card_newsletter.is_active is False
+
+    # Simulate clicking Newsletter card
+    analysis_tab.card_newsletter.clicked.emit(analysis_tab.card_newsletter.category)
+    assert analysis_tab.category_filter.currentData() == "NEWSLETTER"
+    assert analysis_tab.card_newsletter.is_active is True
+    assert analysis_tab.card_total.is_active is False
+
+    # All displayed emails should now be Newsletters
+    for row in range(analysis_tab.table.rowCount()):
+        assert "NEWSLETTER" in analysis_tab.table.item(row, 4).text()
+
+    # Click Newsletter card again -> toggles off back to ALL
+    analysis_tab.card_newsletter.clicked.emit(analysis_tab.card_newsletter.category)
+    assert analysis_tab.category_filter.currentData() == "ALL"
+    assert analysis_tab.card_total.is_active is True
+    assert analysis_tab.table.rowCount() == len(analyzed)
+
+
+def test_analysis_tab_table_formatting_and_preview(qapp, tmp_path: Path):
+    mock_provider = MockMailProvider()
+    window = MainWindow(provider=mock_provider)
+    window.backup_manager.backup_dir = tmp_path
+
+    emails = mock_provider.fetch_emails("acc-1", ["Posteingang"])
+    analyzed = window.analyzer.analyze_batch(emails)
+    window._on_scan_finished(analyzed)
+
+    analysis_tab = window.analysis_tab
+    assert analysis_tab.table.rowCount() > 0
+
+    # Test subject unread dot indicator and bold styling
+    first_email = analysis_tab._filtered_emails[0]
+    sub_text = analysis_tab.table.item(0, 0).text()
+    if not first_email.is_read:
+        assert "●" in sub_text
+    else:
+        assert "●" not in sub_text
+
+    # Test category cell background color
+    cat_item = analysis_tab.table.item(0, 4)
+    assert cat_item.background().color().isValid()
+
+    # Select row and test HTML preview rendering
+    analysis_tab.table.selectRow(0)
+    assert analysis_tab.whitelist_btn.isEnabled() is True
+    assert analysis_tab.ai_summary_btn.isEnabled() is True
+    html_content = analysis_tab.preview_text.toHtml()
+    assert first_email.assigned_category.value in html_content
+
+    # Clear selection and verify empty state
+    analysis_tab.table.clearSelection()
+    assert analysis_tab.whitelist_btn.isEnabled() is False
+    assert analysis_tab.ai_summary_btn.isEnabled() is False
+    assert "Wähle eine E-Mail" in analysis_tab.preview_text.toHtml()
+
+
+def test_main_window_status_bar_and_shortcuts(qapp, tmp_path: Path):
+    mock_provider = MockMailProvider()
+    window = MainWindow(provider=mock_provider)
+    window.backup_manager.backup_dir = tmp_path
+
+    # Initial status bar
+    assert "Verbunden: Demo" in window.status_connection_lbl.text()
+    assert "Keine Daten geladen" in window.status_data_lbl.text()
+
+    # After loading emails
+    emails = mock_provider.fetch_emails("acc-1", ["Posteingang"])
+    analyzed = window.analyzer.analyze_batch(emails)
+    window._on_scan_finished(analyzed)
+
+    assert f"{len(emails)} E-Mails geladen" in window.status_data_lbl.text()
+
+    # Test search focus helper (Ctrl+F)
+    window.tabs.setCurrentIndex(0)
+    window._focus_search()
+    assert window.tabs.currentIndex() == 1
+
+
+def test_scan_tab_horizontal_splitter_and_quick_pills(qapp, tmp_path: Path):
+    mock_provider = MockMailProvider()
+    window = MainWindow(provider=mock_provider)
+    window.backup_manager.backup_dir = tmp_path
+
+    scan_tab = window.scan_tab
+    assert scan_tab.splitter is not None
+    assert scan_tab.splitter.count() == 2
+
+    # Quick limit pill buttons
+    scan_tab.pill_500.click()
+    assert scan_tab.limit_spin.value() == 500
+
+    scan_tab.pill_1000.click()
+    assert scan_tab.limit_spin.value() == 1000
+
+    scan_tab.pill_all.click()
+    assert scan_tab.limit_spin.value() == 0  # 0 indicates 'Keine Begrenzung (Alle)'
+
+
+
 

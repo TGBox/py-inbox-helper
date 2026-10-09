@@ -247,4 +247,90 @@ QScrollBar::handle:vertical:hover {
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
     height: 0px;
 }
+
+QScrollBar:horizontal {
+    border: none;
+    background: #0b0f19;
+    height: 10px;
+    margin: 0px;
+}
+
+QScrollBar::handle:horizontal {
+    background: #334155;
+    min-width: 20px;
+    border-radius: 5px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    background: #475569;
+}
+
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+    width: 0px;
+}
+
+/* Splitters */
+QSplitter::handle {
+    background-color: #1e293b;
+}
+
+QSplitter::handle:horizontal {
+    width: 6px;
+    margin: 4px 1px;
+    border-radius: 3px;
+}
+
+QSplitter::handle:vertical {
+    height: 6px;
+    margin: 1px 4px;
+    border-radius: 3px;
+}
+
+QSplitter::handle:hover {
+    background-color: #38bdf8;
+}
+
+/* Status Bar */
+#statusBar {
+    background-color: #0d131f;
+    border-top: 1px solid #1e293b;
+    padding: 6px 16px;
+}
+
+#statusText {
+    color: #94a3b8;
+    font-size: 12px;
+}
+
+#statusBadge {
+    background-color: #1e293b;
+    color: #38bdf8;
+    border: 1px solid #334155;
+    border-radius: 10px;
+    padding: 2px 10px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+/* Tooltips */
+QToolTip {
+    background-color: #1e293b;
+    color: #f8fafc;
+    border: 1px solid #38bdf8;
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: 12px;
+}
 """
+
+CATEGORY_COLORS = {
+    "NEWSLETTER": {"bg": "#3b0764", "border": "#9333ea", "text": "#e9d5ff", "fg": "#e9d5ff", "badge": "NEWSLETTER"},
+    "INVOICE_FINANCE": {"bg": "#022c22", "border": "#059669", "text": "#a7f3d0", "fg": "#a7f3d0", "badge": "RECHNUNG"},
+    "NOTIFICATION": {"bg": "#1e293b", "border": "#475569", "text": "#cbd5e1", "fg": "#cbd5e1", "badge": "SYSTEM"},
+    "IMPORTANT_ACTION": {"bg": "#451a03", "border": "#d97706", "text": "#fde68a", "fg": "#fde68a", "badge": "WICHTIG"},
+    "RESUBMISSION": {"bg": "#083344", "border": "#0891b2", "text": "#a5f3fc", "fg": "#a5f3fc", "badge": "WIEDERVORLAGE"},
+    "ARCHIVE_OLD": {"bg": "#1e1b4b", "border": "#4f46e5", "text": "#c7d2fe", "fg": "#c7d2fe", "badge": "ARCHIV"},
+    "JUNK": {"bg": "#450a0a", "border": "#dc2626", "text": "#fecaca", "fg": "#fecaca", "badge": "JUNK"},
+    "UNCLASSIFIED": {"bg": "#0f172a", "border": "#334155", "text": "#94a3b8", "fg": "#94a3b8", "badge": "OFFEN"},
+}
+

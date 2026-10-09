@@ -1,8 +1,12 @@
 # Changelog
 
+## SemVer v1.2.0
+
+- 2026-10-09 (5d9702a): update and optimize gui layout
+
 ## SemVer v1.1.0
 
-- 2026-10-09 (09a0d6f): update and expand on the new features
+- 2026-10-09 (799655c): update and expand on the new features
 
 ## SemVer v1.0.0
 

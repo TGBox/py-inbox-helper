@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtGui import QAction, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -26,6 +26,7 @@ from py_inbox_helper.provider.base import BaseMailProvider
 from py_inbox_helper.provider.imap_provider import ImapMailProvider, ImapProfileManager
 from py_inbox_helper.provider.mock_provider import MockMailProvider
 from py_inbox_helper.provider.outlook_provider import OutlookComProvider
+from py_inbox_helper.storage import format_bytes
 from py_inbox_helper.ui.settings_dialog import SettingsDialog
 from py_inbox_helper.ui.styles import DARK_THEME_QSS
 from py_inbox_helper.ui.tabs.analysis_tab import AnalysisTab
@@ -140,7 +141,29 @@ class MainWindow(QMainWindow):
 
         main_layout.addWidget(self.tabs)
 
+        # 3. Bottom Global Status Bar
+        status_bar = QFrame()
+        status_bar.setObjectName("statusBar")
+        status_layout = QHBoxLayout(status_bar)
+        status_layout.setContentsMargins(16, 6, 16, 6)
+        status_layout.setSpacing(16)
+
+        self.status_connection_lbl = QLabel("🟢 Bereit")
+        self.status_connection_lbl.setStyleSheet("color: #38bdf8; font-size: 11px; font-weight: 600;")
+        self.status_data_lbl = QLabel("Keine Daten geladen")
+        self.status_data_lbl.setStyleSheet("color: #94a3b8; font-size: 11px;")
+        self.status_ai_lbl = QLabel("KI: Deaktiviert")
+        self.status_ai_lbl.setStyleSheet("color: #64748b; font-size: 11px;")
+
+        status_layout.addWidget(self.status_connection_lbl)
+        status_layout.addWidget(self.status_data_lbl)
+        status_layout.addStretch()
+        status_layout.addWidget(self.status_ai_lbl)
+
+        main_layout.addWidget(status_bar)
+
         self._refresh_provider_combo()
+        self._update_status_bar()
 
         # Wire Tab Signals
         self.scan_tab.start_scan_requested.connect(self._start_scan)
@@ -158,7 +181,7 @@ class MainWindow(QMainWindow):
         self.backup_tab.restore_items_requested.connect(self._start_restore_items)
 
     def _setup_shortcuts(self):
-        """Setup keyboard shortcuts including F11 for Fullscreen / Windowed toggle."""
+        """Setup keyboard shortcuts including F11, Esc, Ctrl+1..5, and Ctrl+F."""
         self.fullscreen_action = QAction(self)
         self.fullscreen_action.setShortcut(QKeySequence(Qt.Key_F11))
         self.fullscreen_action.triggered.connect(self.toggle_fullscreen)
@@ -168,6 +191,53 @@ class MainWindow(QMainWindow):
         self.esc_action.setShortcut(QKeySequence(Qt.Key_Escape))
         self.esc_action.triggered.connect(self._exit_fullscreen_on_esc)
         self.addAction(self.esc_action)
+
+        # Tab navigation shortcuts: Ctrl+1 to Ctrl+5
+        for i in range(5):
+            sc = QShortcut(QKeySequence(f"Ctrl+{i+1}"), self)
+            sc.activated.connect(lambda idx=i: self.tabs.setCurrentIndex(idx))
+
+        # Search focus shortcut: Ctrl+F
+        sc_find = QShortcut(QKeySequence("Ctrl+F"), self)
+        sc_find.activated.connect(self._focus_search)
+
+    def _focus_search(self):
+        """Focuses the quick search input in AnalysisTab."""
+        self.tabs.setCurrentIndex(1)
+        self.analysis_tab.search_input.setFocus()
+        self.analysis_tab.search_input.selectAll()
+
+    def _update_status_bar(self):
+        """Refreshes status indicators at the bottom bar."""
+        # Connection / Provider
+        if isinstance(self.provider, OutlookComProvider):
+            self.status_connection_lbl.setText("🟢 Verbunden: Outlook (Desktop COM)")
+            self.status_connection_lbl.setStyleSheet("color: #10b981; font-size: 11px; font-weight: 600;")
+        elif isinstance(self.provider, ImapMailProvider):
+            self.status_connection_lbl.setText("🟢 Verbunden: IMAP")
+            self.status_connection_lbl.setStyleSheet("color: #10b981; font-size: 11px; font-weight: 600;")
+        else:
+            self.status_connection_lbl.setText("🔵 Verbunden: Demo (Mock-Modus)")
+            self.status_connection_lbl.setStyleSheet("color: #38bdf8; font-size: 11px; font-weight: 600;")
+
+        # Data stats
+        if self.current_emails:
+            total_bytes = sum(e.size_bytes for e in self.current_emails)
+            unread_count = sum(1 for e in self.current_emails if not e.is_read)
+            self.status_data_lbl.setText(
+                f"{len(self.current_emails)} E-Mails geladen ({format_bytes(total_bytes)}) • {unread_count} ungelesen"
+            )
+        else:
+            self.status_data_lbl.setText("Keine Daten geladen (Postfach noch nicht gescannt)")
+
+        # AI Engine status
+        if self.ai_config.provider != "disabled":
+            model = self.ai_config.model_name or "Standard"
+            self.status_ai_lbl.setText(f"✨ KI: Aktiv ({self.ai_config.provider.upper()} - {model})")
+            self.status_ai_lbl.setStyleSheet("color: #a855f7; font-size: 11px; font-weight: 600;")
+        else:
+            self.status_ai_lbl.setText("KI: Deaktiviert (Lokale Heuristik)")
+            self.status_ai_lbl.setStyleSheet("color: #64748b; font-size: 11px;")
 
     def toggle_fullscreen(self):
         """Toggles between Fullscreen mode and Windowed mode."""
@@ -241,6 +311,7 @@ class MainWindow(QMainWindow):
                 self.analysis_tab.set_emails(self.current_emails)
         else:
             self._refresh_provider_combo()
+        self._update_status_bar()
 
     def _on_provider_mode_changed(self, index: int):
         data = self.provider_combo.currentData()
@@ -274,6 +345,7 @@ class MainWindow(QMainWindow):
             self.provider = MockMailProvider()
             self.scan_tab.provider = self.provider
             self.scan_tab.reload_accounts()
+        self._update_status_bar()
 
     # --- VIP Whitelist & AI Handlers ---
     def _add_to_whitelist(self, sender: str):
@@ -321,6 +393,7 @@ class MainWindow(QMainWindow):
         self.scan_tab.set_scan_in_progress(False)
         self.scan_tab.set_status_text(f"Scan erfolgreich: {len(emails)} E-Mails geladen und analysiert.")
         self.analysis_tab.set_emails(emails)
+        self._update_status_bar()
         self.tabs.setCurrentIndex(1)
 
     def _on_scan_failed(self, error_msg: str):

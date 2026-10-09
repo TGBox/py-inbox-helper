@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -26,33 +27,65 @@ from PySide6.QtWidgets import (
 
 from py_inbox_helper.models import EmailCategory, EmailItem
 from py_inbox_helper.storage import SenderCluster, StorageAnalyzer, format_bytes
+from py_inbox_helper.ui.styles import CATEGORY_COLORS
 
 
 class MetricCard(QFrame):
-    """Visual KPI badge card displaying a metric number and label."""
+    """Interactive KPI badge card displaying a metric number, title, and quick-filter toggle."""
 
-    def __init__(self, title: str, color_accent: str = "#38bdf8", parent: Optional[QWidget] = None):
+    clicked = Signal(object)  # Emits associated EmailCategory or None
+
+    def __init__(
+        self,
+        title: str,
+        color_accent: str = "#38bdf8",
+        category: Optional[EmailCategory] = None,
+        parent: Optional[QWidget] = None,
+    ):
         super().__init__(parent)
-        self.setStyleSheet(f"""
-            QFrame {{
-                background-color: #111827;
-                border: 1px solid #1f2937;
-                border-left: 4px solid {color_accent};
-                border-radius: 8px;
-                padding: 10px;
-            }}
-        """)
+        self.category = category
+        self.color_accent = color_accent
+        self.is_active = False
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip(f"Klicken, um die Tabelle nach '{title}' zu filtern")
+
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 8, 10, 8)
-        layout.setSpacing(2)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(4)
 
         self.num_label = QLabel("0")
         self.num_label.setStyleSheet(f"font-size: 22px; font-weight: 700; color: {color_accent};")
         self.title_label = QLabel(title)
-        self.title_label.setStyleSheet("font-size: 11px; color: #94a3b8; font-weight: 600; text-transform: uppercase;")
+        self.title_label.setStyleSheet("font-size: 11px; color: #94a3b8; font-weight: 600;")
 
         layout.addWidget(self.num_label)
         layout.addWidget(self.title_label)
+        self._update_style()
+
+    def _update_style(self):
+        bg = "#1e293b" if self.is_active else "#111827"
+        border = self.color_accent if self.is_active else "#1f2937"
+        self.setStyleSheet(f"""
+            QFrame {{
+                background-color: {bg};
+                border: 1px solid {border};
+                border-left: 4px solid {self.color_accent};
+                border-radius: 8px;
+            }}
+            QFrame:hover {{
+                background-color: #1a2234;
+                border-color: {self.color_accent};
+            }}
+        """)
+
+    def set_active(self, active: bool):
+        self.is_active = active
+        self._update_style()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit(self.category)
+        super().mousePressEvent(event)
 
     def set_value(self, val: int):
         self.num_label.setText(str(val))
@@ -82,14 +115,27 @@ class AnalysisTab(QWidget):
         kpi_grid = QGridLayout()
         kpi_grid.setSpacing(12)
 
-        self.card_total = MetricCard("Analysiert Gesamt", "#38bdf8")
-        self.card_newsletter = MetricCard("Newsletter && Promo", "#a855f7")
-        self.card_invoices = MetricCard("Rechnungen && Finanzen", "#10b981")
-        self.card_notifications = MetricCard("Benachrichtigungen", "#64748b")
-        self.card_important = MetricCard("Wichtig / Aktion", "#f59e0b")
-        self.card_resubmission = MetricCard("Wiedervorlage", "#06b6d4")
-        self.card_archive = MetricCard("Archivierung (>180T)", "#6366f1")
-        self.card_junk = MetricCard("Junk / Papierkorb", "#ef4444")
+        self.card_total = MetricCard("Analysiert Gesamt", "#38bdf8", category=None)
+        self.card_newsletter = MetricCard("Newsletter && Promo", "#a855f7", category=EmailCategory.NEWSLETTER)
+        self.card_invoices = MetricCard("Rechnungen && Finanzen", "#10b981", category=EmailCategory.INVOICE_FINANCE)
+        self.card_notifications = MetricCard("Benachrichtigungen", "#64748b", category=EmailCategory.NOTIFICATION)
+        self.card_important = MetricCard("Wichtig / Aktion", "#f59e0b", category=EmailCategory.IMPORTANT_ACTION)
+        self.card_resubmission = MetricCard("Wiedervorlage", "#06b6d4", category=EmailCategory.RESUBMISSION)
+        self.card_archive = MetricCard("Archivierung (>180T)", "#6366f1", category=EmailCategory.ARCHIVE_OLD)
+        self.card_junk = MetricCard("Junk / Papierkorb", "#ef4444", category=EmailCategory.JUNK)
+
+        self._kpi_cards: List[MetricCard] = [
+            self.card_total,
+            self.card_newsletter,
+            self.card_invoices,
+            self.card_notifications,
+            self.card_important,
+            self.card_resubmission,
+            self.card_archive,
+            self.card_junk,
+        ]
+        for card in self._kpi_cards:
+            card.clicked.connect(self._on_metric_card_clicked)
 
         kpi_grid.addWidget(self.card_total, 0, 0)
         kpi_grid.addWidget(self.card_newsletter, 0, 1)
@@ -169,13 +215,13 @@ class AnalysisTab(QWidget):
         # Interactive column & row resizing
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.table.verticalHeader().setSectionResizeMode(QHeaderView.Interactive)
-        self.table.setColumnWidth(0, 260)  # Betreff
-        self.table.setColumnWidth(1, 240)  # Absender
+        self.table.setColumnWidth(0, 270)  # Betreff
+        self.table.setColumnWidth(1, 230)  # Absender
         self.table.setColumnWidth(2, 130)  # Empfangen
-        self.table.setColumnWidth(3, 85)   # Größe
-        self.table.setColumnWidth(4, 130)  # Kategorie
+        self.table.setColumnWidth(3, 90)   # Größe
+        self.table.setColumnWidth(4, 135)  # Kategorie
         self.table.setColumnWidth(5, 230)  # Grund / Signal
-        self.table.setColumnWidth(6, 140)  # Abmeldung
+        self.table.setColumnWidth(6, 120)  # Abmeldung
         self.table.horizontalHeader().setStretchLastSection(True)
 
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -185,27 +231,38 @@ class AnalysisTab(QWidget):
         self.table.itemSelectionChanged.connect(self._on_row_selected)
         splitter.addWidget(self.table)
 
-        # Preview Panel with AI Summarize Button
-        preview_box = QGroupBox("Detailansicht, Vorschau && KI-Assistent")
+        # Preview Panel with AI Summarize and VIP Whitelist Buttons
+        preview_box = QGroupBox("Detailansicht, Vorschau && Schnellaktionen")
         prev_layout = QVBoxLayout(preview_box)
         prev_layout.setContentsMargins(10, 8, 10, 8)
 
         prev_header = QHBoxLayout()
-        prev_header.addWidget(QLabel("Ausgewählte E-Mail:"))
-        self.ai_summary_btn = QPushButton("KI-Zusammenfassung erstellen")
-        self.ai_summary_btn.clicked.connect(self._trigger_ai_summary)
+        prev_title = QLabel("Ausgewählte E-Mail:")
+        prev_title.setStyleSheet("font-weight: 600; color: #f8fafc;")
+        prev_header.addWidget(prev_title)
         prev_header.addStretch()
+
+        self.whitelist_btn = QPushButton("Absender als VIP")
+        self.whitelist_btn.setToolTip("Diesen Absender zur Whitelist / VIP hinzufügen")
+        self.whitelist_btn.clicked.connect(self._whitelist_current_email)
+        self.whitelist_btn.setEnabled(False)
+
+        self.ai_summary_btn = QPushButton("KI-Zusammenfassung")
+        self.ai_summary_btn.clicked.connect(self._trigger_ai_summary)
+        self.ai_summary_btn.setEnabled(False)
+
+        prev_header.addWidget(self.whitelist_btn)
         prev_header.addWidget(self.ai_summary_btn)
         prev_layout.addLayout(prev_header)
 
         self.preview_text = QTextEdit()
         self.preview_text.setReadOnly(True)
-        self.preview_text.setMinimumHeight(80)
-        self.preview_text.setPlaceholderText("Wähle eine E-Mail aus der Tabelle für Details...")
+        self.preview_text.setMinimumHeight(100)
+        self.preview_text.setPlaceholderText("Wähle eine E-Mail aus der Tabelle für Details und Vorschau...")
         prev_layout.addWidget(self.preview_text)
         splitter.addWidget(preview_box)
 
-        splitter.setSizes([320, 160])
+        splitter.setSizes([320, 180])
         ev_layout.addWidget(splitter)
         self.stack.addWidget(emails_view_widget)
 
@@ -254,6 +311,29 @@ class AnalysisTab(QWidget):
         self.view_emails_btn.setChecked(index == 0)
         self.view_clusters_btn.setChecked(index == 1)
 
+    def _on_metric_card_clicked(self, category: Optional[EmailCategory]):
+        """Filter table by clicked KPI category, or reset to ALL if clicked again or total."""
+        if category is None:
+            self.category_filter.setCurrentIndex(0)  # "ALL"
+        else:
+            current_cat = self.category_filter.currentData()
+            if current_cat == category.value:
+                self.category_filter.setCurrentIndex(0)  # Toggle off
+            else:
+                idx = self.category_filter.findData(category.value)
+                if idx >= 0:
+                    self.category_filter.setCurrentIndex(idx)
+        self._sync_active_card()
+
+    def _sync_active_card(self):
+        """Highlights the KPI card corresponding to current category filter."""
+        current_data = self.category_filter.currentData()
+        for card in self._kpi_cards:
+            if card.category is None:
+                card.set_active(current_data == "ALL")
+            else:
+                card.set_active(card.category.value == current_data)
+
     def set_emails(self, emails: List[EmailItem]):
         """Populates the tab with analyzed emails and updates KPI counts and sender clusters."""
         self._emails = emails
@@ -301,17 +381,22 @@ class AnalysisTab(QWidget):
             filtered.append(e)
 
         self._filtered_emails = filtered
+        self._sync_active_card()
         self._render_table()
 
     def _render_table(self):
         self.table.setRowCount(len(self._filtered_emails))
         for row, e in enumerate(self._filtered_emails):
-            # Subject
-            sub_item = QTableWidgetItem(e.subject)
+            # Subject with unread dot
+            dot = "●  " if not e.is_read else "   "
+            sub_item = QTableWidgetItem(f"{dot}{e.subject}")
             if not e.is_read:
                 font = sub_item.font()
                 font.setBold(True)
                 sub_item.setFont(font)
+                sub_item.setForeground(QColor("#f8fafc"))
+            else:
+                sub_item.setForeground(QColor("#cbd5e1"))
             self.table.setItem(row, 0, sub_item)
 
             # Sender
@@ -319,48 +404,140 @@ class AnalysisTab(QWidget):
                 sender_str = f"{e.sender_name} <{e.sender_email}>"
             else:
                 sender_str = e.sender_email or e.sender_name or "(Unbekannt)"
-            self.table.setItem(row, 1, QTableWidgetItem(sender_str))
+            sender_item = QTableWidgetItem(sender_str)
+            sender_item.setForeground(QColor("#e2e8f0"))
+            self.table.setItem(row, 1, sender_item)
 
             # Date
             date_str = e.received_time.strftime("%d.%m.%Y %H:%M")
-            self.table.setItem(row, 2, QTableWidgetItem(date_str))
+            date_item = QTableWidgetItem(date_str)
+            date_item.setForeground(QColor("#94a3b8"))
+            self.table.setItem(row, 2, date_item)
 
-            # Size
+            # Size with threshold styling
             size_str = format_bytes(e.size_bytes)
-            self.table.setItem(row, 3, QTableWidgetItem(size_str))
+            size_item = QTableWidgetItem(size_str)
+            size_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            if e.size_bytes >= 15_000_000:
+                size_item.setForeground(QColor("#ef4444"))
+                size_item.setToolTip("Sehr großer Anhang / E-Mail (> 15 MB)")
+            elif e.size_bytes >= 5_000_000:
+                size_item.setForeground(QColor("#f59e0b"))
+                size_item.setToolTip("Große E-Mail (> 5 MB)")
+            else:
+                size_item.setForeground(QColor("#94a3b8"))
+            self.table.setItem(row, 3, size_item)
 
-            # Category
-            cat_item = QTableWidgetItem(e.assigned_category.value)
+            # Category with semantic badge colors
+            cat_key = e.assigned_category.name if hasattr(e.assigned_category, "name") else str(e.assigned_category)
+            cat_meta = CATEGORY_COLORS.get(
+                cat_key,
+                {"bg": "#1e293b", "fg": "#f8fafc", "border": "#334155"}
+            )
+            cat_item = QTableWidgetItem(f" {e.assigned_category.value} ")
+            cat_item.setBackground(QColor(cat_meta.get("bg", "#1e293b")))
+            cat_item.setForeground(QColor(cat_meta.get("fg", "#f8fafc")))
+            cat_item.setTextAlignment(Qt.AlignCenter)
             self.table.setItem(row, 4, cat_item)
 
             # Reason
-            self.table.setItem(row, 5, QTableWidgetItem(e.classification_reason))
+            reason_item = QTableWidgetItem(e.classification_reason)
+            reason_item.setForeground(QColor("#94a3b8"))
+            self.table.setItem(row, 5, reason_item)
 
-            # Unsubscribe
-            unsub_str = "One-Click verfügbar" if e.is_one_click_unsubscribe else ("Web-Link" if e.has_unsubscribe_header else "-")
-            self.table.setItem(row, 6, QTableWidgetItem(unsub_str))
+            # Unsubscribe badge
+            if e.is_one_click_unsubscribe:
+                unsub_item = QTableWidgetItem("⚡ 1-Click")
+                unsub_item.setForeground(QColor("#38bdf8"))
+                unsub_item.setToolTip(f"RFC 8058 One-Click Header vorhanden:\n{e.unsubscribe_url or ''}")
+            elif e.has_unsubscribe_header:
+                unsub_item = QTableWidgetItem("🔗 Link")
+                unsub_item.setForeground(QColor("#94a3b8"))
+                unsub_item.setToolTip(f"Abmelde-Link vorhanden:\n{e.unsubscribe_url or e.unsubscribe_mailto or ''}")
+            else:
+                unsub_item = QTableWidgetItem("—")
+                unsub_item.setForeground(QColor("#475569"))
+            unsub_item.setTextAlignment(Qt.AlignCenter)
+            self.table.setItem(row, 6, unsub_item)
 
     def _on_row_selected(self):
+        selected_rows = self.table.selectionModel().selectedRows()
+        if not selected_rows:
+            self.preview_text.setHtml(
+                "<div style='color: #64748b; text-align: center; padding: 30px; font-size: 13px;'>"
+                "Wähle eine E-Mail aus der Tabelle aus, um Details und Vorschau anzuzeigen.</div>"
+            )
+            self.whitelist_btn.setEnabled(False)
+            self.ai_summary_btn.setEnabled(False)
+            return
+
+        row = selected_rows[0].row()
+        if row < len(self._filtered_emails):
+            email = self._filtered_emails[row]
+            self.whitelist_btn.setEnabled(bool(email.sender_email))
+            self.ai_summary_btn.setEnabled(True)
+
+            cat_key = email.assigned_category.name if hasattr(email.assigned_category, "name") else str(email.assigned_category)
+            cat_meta = CATEGORY_COLORS.get(
+                cat_key,
+                {"bg": "#1e293b", "fg": "#f8fafc", "border": "#334155"}
+            )
+            read_status = "Gelesen" if email.is_read else "Ungelesen"
+            read_color = "#10b981" if email.is_read else "#ef4444"
+
+            # Rich modern HTML preview card
+            body_preview_escaped = (
+                (email.body_preview or "(Kein Textinhalt verfügbar)")
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\n", "<br>")
+            )
+            subject_escaped = email.subject.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            if email.sender_name and email.sender_name != email.sender_email:
+                sender_escaped = f"{email.sender_name} &lt;{email.sender_email}&gt;"
+            else:
+                sender_escaped = email.sender_email or "(Unbekannt)"
+            sender_escaped = sender_escaped.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+            unsub_html = ""
+            if email.has_unsubscribe_header:
+                unsub_info = email.unsubscribe_url or email.unsubscribe_mailto or "Verfügbar"
+                unsub_html = f"<div style='margin-top: 6px; font-size: 11px; color: #38bdf8;'><b>Abmelde-Option:</b> {unsub_info}</div>"
+
+            html = f"""
+            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #f8fafc;">
+                <div style="margin-bottom: 8px;">
+                    <span style="font-size: 14px; font-weight: 700; color: #ffffff;">{subject_escaped}</span>
+                </div>
+                <div style="margin-bottom: 10px;">
+                    <span style="background-color: {cat_meta['bg']}; color: {cat_meta['fg']}; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;">{email.assigned_category.value}</span> &nbsp;
+                    <span style="background-color: #1e293b; color: {read_color}; padding: 2px 8px; border-radius: 4px; font-size: 11px;">● {read_status}</span> &nbsp;
+                    <span style="background-color: #1e293b; color: #94a3b8; padding: 2px 8px; border-radius: 4px; font-size: 11px;">{format_bytes(email.size_bytes)}</span> &nbsp;
+                    <span style="background-color: #1e293b; color: #94a3b8; padding: 2px 8px; border-radius: 4px; font-size: 11px;">Priorität: {email.importance}</span>
+                </div>
+                <div style="background-color: #111827; border: 1px solid #1f2937; border-radius: 6px; padding: 8px 12px; margin-bottom: 10px; font-size: 12px; line-height: 1.5;">
+                    <div style="color: #cbd5e1;"><b>Von:</b> {sender_escaped}</div>
+                    <div style="color: #94a3b8;"><b>Datum:</b> {email.received_time.strftime('%d.%m.%Y %H:%M:%S')} &nbsp;|&nbsp; <b>Ordner:</b> {email.folder_path}</div>
+                    <div style="color: #64748b; margin-top: 4px;"><b>Grund:</b> {email.classification_reason}</div>
+                    {unsub_html}
+                </div>
+                <div style="background-color: #0d1117; border-left: 3px solid #38bdf8; padding: 10px 14px; border-radius: 4px; font-size: 12px; color: #e2e8f0; line-height: 1.6;">
+                    {body_preview_escaped}
+                </div>
+            </div>
+            """
+            self.preview_text.setHtml(html)
+
+    def _whitelist_current_email(self):
         selected_rows = self.table.selectionModel().selectedRows()
         if not selected_rows:
             return
         row = selected_rows[0].row()
         if row < len(self._filtered_emails):
             email = self._filtered_emails[row]
-            details = [
-                f"Betreff: {email.subject}",
-                f"Absender: {email.sender_name} ({email.sender_email})",
-                f"Datum: {email.received_time.strftime('%d.%m.%Y %H:%M:%S')} | Größe: {format_bytes(email.size_bytes)}",
-                f"Ordner: {email.folder_path} | Gelesen: {'Ja' if email.is_read else 'Nein'} | Priorität: {email.importance}",
-                f"Kategorie: {email.assigned_category.value} -> {email.classification_reason}",
-            ]
-            if email.has_unsubscribe_header:
-                details.append(f"Abmelde-Optionen: URL={email.unsubscribe_url or '-'}, Mailto={email.unsubscribe_mailto or '-'}")
-            details.append("-" * 60)
-            details.append("Vorschau Inhalt:")
-            details.append(email.body_preview or "(Kein Textinhalt verfügbar)")
-
-            self.preview_text.setText("\n".join(details))
+            if email.sender_email:
+                self.add_to_whitelist_requested.emit(email.sender_email)
 
     def _trigger_ai_summary(self):
         selected_rows = self.table.selectionModel().selectedRows()
@@ -369,11 +546,25 @@ class AnalysisTab(QWidget):
         row = selected_rows[0].row()
         if row < len(self._filtered_emails):
             email = self._filtered_emails[row]
+            self.ai_summary_btn.setEnabled(False)
             self.ai_summarize_requested.emit(email)
 
     def display_ai_summary(self, summary_text: str):
-        current_text = self.preview_text.toPlainText()
-        self.preview_text.setText(f"[KI-ZUSAMMENFASSUNG]:\n{summary_text}\n\n" + current_text)
+        self.ai_summary_btn.setEnabled(True)
+        escaped_summary = (
+            summary_text.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace("\n", "<br>")
+        )
+        callout = f"""
+        <div style="background-color: #1e1b4b; border: 1px solid #6366f1; border-left: 4px solid #818cf8; border-radius: 6px; padding: 10px 14px; margin-bottom: 12px;">
+            <div style="color: #a5b4fc; font-weight: 700; font-size: 12px; margin-bottom: 4px;">✨ KI-ZUSAMMENFASSUNG</div>
+            <div style="color: #e0e7ff; font-size: 12px; line-height: 1.5;">{escaped_summary}</div>
+        </div>
+        """
+        current_html = self.preview_text.toHtml()
+        self.preview_text.setHtml(callout + current_html)
 
     def _show_table_context_menu(self, pos):
         selected_rows = self.table.selectionModel().selectedRows()

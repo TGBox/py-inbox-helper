@@ -39,12 +39,23 @@ class ScanTab(QWidget):
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setSpacing(16)
-        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(12)
+        layout.setContentsMargins(18, 16, 18, 16)
+
+        # Main 2-Column Splitter (Left: Account & Folders, Right: Filters & Action Card)
+        self.splitter = QSplitter(Qt.Horizontal)
+        main_splitter = self.splitter
+
+        # --- LEFT COLUMN: Account & Folders ---
+        left_widget = QWidget()
+        left_layout = QVBoxLayout(left_widget)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(12)
 
         # 1. Account Selection Box
         account_box = QGroupBox("1. Postfach && E-Mail-Konto auswählen")
         acc_layout = QVBoxLayout(account_box)
+        acc_layout.setSpacing(8)
 
         acc_row = QHBoxLayout()
         acc_label = QLabel("Konto / Postfach:")
@@ -61,34 +72,48 @@ class ScanTab(QWidget):
         self.account_info_label = QLabel("Lädt Konten...")
         self.account_info_label.setStyleSheet("color: #94a3b8; font-size: 12px;")
         acc_layout.addWidget(self.account_info_label)
-        layout.addWidget(account_box)
-
-        # Resizable Splitter for Panels (Folders & Filters)
-        panels_splitter = QSplitter(Qt.Vertical)
+        left_layout.addWidget(account_box)
 
         # 2. Folder Selection Box
         folder_box = QGroupBox("2. Zu analysierende Ordner")
         folder_layout = QVBoxLayout(folder_box)
+        folder_layout.setSpacing(8)
 
         folder_actions = QHBoxLayout()
-        self.select_all_folders_btn = QPushButton("Alle auswählen")
-        self.select_all_folders_btn.clicked.connect(self._select_all_folders)
         self.select_inbox_only_btn = QPushButton("Nur Posteingang")
         self.select_inbox_only_btn.clicked.connect(self._select_inbox_only)
+        self.select_all_folders_btn = QPushButton("Alle auswählen")
+        self.select_all_folders_btn.clicked.connect(self._select_all_folders)
+        self.deselect_all_btn = QPushButton("Keine")
+        self.deselect_all_btn.clicked.connect(self._deselect_all_folders)
 
         folder_actions.addWidget(self.select_inbox_only_btn)
         folder_actions.addWidget(self.select_all_folders_btn)
+        folder_actions.addWidget(self.deselect_all_btn)
         folder_actions.addStretch()
         folder_layout.addLayout(folder_actions)
 
         self.folder_list = QListWidget()
-        self.folder_list.setMinimumHeight(110)
+        self.folder_list.itemChanged.connect(self._update_folder_selection_stats)
         folder_layout.addWidget(self.folder_list)
-        panels_splitter.addWidget(folder_box)
+
+        self.folder_stats_label = QLabel("Keine Ordner geladen.")
+        self.folder_stats_label.setStyleSheet("color: #38bdf8; font-size: 12px; font-weight: 500;")
+        folder_layout.addWidget(self.folder_stats_label)
+
+        left_layout.addWidget(folder_box, 1)
+        main_splitter.addWidget(left_widget)
+
+        # --- RIGHT COLUMN: Filter Options & Action Card ---
+        right_widget = QWidget()
+        right_layout = QVBoxLayout(right_widget)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(12)
 
         # 3. Filter Options
-        filter_box = QGroupBox("3. Filter && Umfang")
+        filter_box = QGroupBox("3. Filter && Analyse-Umfang")
         filter_form = QFormLayout(filter_box)
+        filter_form.setSpacing(10)
 
         self.time_filter_combo = QComboBox()
         self.time_filter_combo.addItems([
@@ -119,44 +144,81 @@ class ScanTab(QWidget):
         self.custom_date_widget.setVisible(False)
         filter_form.addRow("Datum:", self.custom_date_widget)
 
-        # Limit row
+        # Limit row with quick pills
+        limit_container = QWidget()
+        limit_layout = QVBoxLayout(limit_container)
+        limit_layout.setContentsMargins(0, 0, 0, 0)
+        limit_layout.setSpacing(6)
+
+        limit_subrow = QHBoxLayout()
         self.limit_spin = QSpinBox()
         self.limit_spin.setRange(0, 100000)
         self.limit_spin.setValue(0)
         self.limit_spin.setSpecialValueText("Keine Begrenzung (Alle)")
-        filter_form.addRow("Max. E-Mails:", self.limit_spin)
+        limit_subrow.addWidget(self.limit_spin, 1)
 
-        panels_splitter.addWidget(filter_box)
-        panels_splitter.setSizes([220, 180])
-        layout.addWidget(panels_splitter)
+        self.pill_500 = QPushButton("500")
+        self.pill_500.setFixedWidth(50)
+        self.pill_500.clicked.connect(lambda: self.limit_spin.setValue(500))
+        self.pill_1000 = QPushButton("1.000")
+        self.pill_1000.setFixedWidth(60)
+        self.pill_1000.clicked.connect(lambda: self.limit_spin.setValue(1000))
+        self.pill_all = QPushButton("Alle")
+        self.pill_all.setFixedWidth(50)
+        self.pill_all.clicked.connect(lambda: self.limit_spin.setValue(0))
 
-        # 4. Action / Progress
+        limit_subrow.addWidget(self.pill_500)
+        limit_subrow.addWidget(self.pill_1000)
+        limit_subrow.addWidget(self.pill_all)
+        limit_layout.addLayout(limit_subrow)
+
+        filter_form.addRow("Max. E-Mails:", limit_container)
+        right_layout.addWidget(filter_box)
+
+        # 4. Action & Progress Box
+        action_box = QGroupBox("4. Analyse ausführen")
+        act_layout = QVBoxLayout(action_box)
+        act_layout.setSpacing(10)
+
+        info_hint = QLabel(
+            "Hinweis: Der Analyse-Scan liest ausschließlich E-Mail-Metadaten.\n"
+            "Es werden in diesem Schritt keinerlei Daten gelöscht oder verschoben."
+        )
+        info_hint.setStyleSheet("color: #94a3b8; font-size: 12px; line-height: 1.4;")
+        act_layout.addWidget(info_hint)
+
         action_row = QHBoxLayout()
         self.start_btn = QPushButton("Postfach analysieren")
         self.start_btn.setObjectName("primaryBtn")
-        self.start_btn.setFixedHeight(40)
+        self.start_btn.setFixedHeight(42)
         self.start_btn.clicked.connect(self._on_start_clicked)
 
         self.cancel_btn = QPushButton("Abbrechen")
-        self.cancel_btn.setFixedHeight(40)
+        self.cancel_btn.setFixedHeight(42)
         self.cancel_btn.setEnabled(False)
         self.cancel_btn.clicked.connect(self.cancel_scan_requested.emit)
 
         action_row.addWidget(self.start_btn, 2)
         action_row.addWidget(self.cancel_btn, 1)
-        layout.addLayout(action_row)
+        act_layout.addLayout(action_row)
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
         self.progress_bar.setVisible(False)
-        layout.addWidget(self.progress_bar)
+        act_layout.addWidget(self.progress_bar)
 
         self.status_label = QLabel("Bereit zum Scannen.")
-        self.status_label.setStyleSheet("color: #94a3b8;")
-        layout.addWidget(self.status_label)
+        self.status_label.setStyleSheet("color: #38bdf8; font-weight: 500;")
+        act_layout.addWidget(self.status_label)
 
-        layout.addStretch()
+        right_layout.addWidget(action_box)
+        right_layout.addStretch()
+
+        main_splitter.addWidget(right_widget)
+        main_splitter.setSizes([380, 420])
+        layout.addWidget(main_splitter)
+
         self.reload_accounts()
 
     def reload_accounts(self, select_id: Optional[str] = None):
@@ -200,12 +262,24 @@ class ScanTab(QWidget):
                 self.folder_list.addItem(item)
         except Exception as ex:
             self.status_label.setText(f"Fehler beim Laden der Ordner: {ex}")
+        self._update_folder_selection_stats()
 
     def _select_all_folders(self):
+        self.folder_list.blockSignals(True)
         for i in range(self.folder_list.count()):
             self.folder_list.item(i).setCheckState(Qt.Checked)
+        self.folder_list.blockSignals(False)
+        self._update_folder_selection_stats()
+
+    def _deselect_all_folders(self):
+        self.folder_list.blockSignals(True)
+        for i in range(self.folder_list.count()):
+            self.folder_list.item(i).setCheckState(Qt.Unchecked)
+        self.folder_list.blockSignals(False)
+        self._update_folder_selection_stats()
 
     def _select_inbox_only(self):
+        self.folder_list.blockSignals(True)
         for i in range(self.folder_list.count()):
             item = self.folder_list.item(i)
             path = item.data(Qt.UserRole)
@@ -213,6 +287,20 @@ class ScanTab(QWidget):
                 item.setCheckState(Qt.Checked)
             else:
                 item.setCheckState(Qt.Unchecked)
+        self.folder_list.blockSignals(False)
+        self._update_folder_selection_stats()
+
+    def _update_folder_selection_stats(self):
+        total = self.folder_list.count()
+        selected = sum(1 for i in range(total) if self.folder_list.item(i).checkState() == Qt.Checked)
+        if total == 0:
+            self.folder_stats_label.setText("Keine Ordner geladen.")
+        elif selected == 0:
+            self.folder_stats_label.setText(f"0 von {total} Ordnern ausgewählt (Bitte mindestens 1 wählen).")
+            self.folder_stats_label.setStyleSheet("color: #f59e0b; font-size: 12px; font-weight: 500;")
+        else:
+            self.folder_stats_label.setText(f"✓ {selected} von {total} Ordnern für die Analyse ausgewählt.")
+            self.folder_stats_label.setStyleSheet("color: #38bdf8; font-size: 12px; font-weight: 500;")
 
     def _on_time_filter_changed(self, index: int):
         self.custom_date_widget.setVisible(index == 5)
