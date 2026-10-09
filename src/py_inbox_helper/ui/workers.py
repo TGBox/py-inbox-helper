@@ -142,7 +142,7 @@ class ExecutionWorker(QThread):
 
 
 class RestoreWorker(QThread):
-    """Background worker for restoring a previous snapshot."""
+    """Background worker for restoring a previous snapshot (full or granular)."""
     status_updated = Signal(str)
     finished = Signal(list)  # List[Dict[str, Any]]
     failed = Signal(str)
@@ -152,11 +152,13 @@ class RestoreWorker(QThread):
         provider: BaseMailProvider,
         backup_manager: BackupManager,
         snapshot_id: str,
+        item_ids: Optional[List[str]] = None,
     ):
         super().__init__()
         self.provider = provider
         self.backup_manager = backup_manager
         self.snapshot_id = snapshot_id
+        self.item_ids = item_ids
 
     def run(self):
         try:
@@ -166,8 +168,12 @@ class RestoreWorker(QThread):
                 self.failed.emit(f"Snapshot '{self.snapshot_id}' nicht gefunden.")
                 return
 
-            self.status_updated.emit(f"Stelle {len(snapshot.items)} Elemente wieder her...")
-            results = self.backup_manager.restore_snapshot(snapshot, self.provider)
+            if self.item_ids:
+                self.status_updated.emit(f"Stelle {len(self.item_ids)} ausgewählte Elemente wieder her...")
+                results = self.backup_manager.restore_items_by_id(snapshot, self.item_ids, self.provider)
+            else:
+                self.status_updated.emit(f"Stelle alle {len(snapshot.items)} Elemente wieder her...")
+                results = self.backup_manager.restore_snapshot(snapshot, self.provider)
 
             self.status_updated.emit("Wiederherstellung (Rollback) erfolgreich abgeschlossen.")
             self.finished.emit(results)

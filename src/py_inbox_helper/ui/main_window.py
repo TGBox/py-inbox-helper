@@ -1,11 +1,10 @@
-"""Main application window with navigation, fullscreen/windowed toggles, and workflow wiring."""
+"""Main application window with navigation, fullscreen/windowed toggles, AI, and IMAP support."""
 from __future__ import annotations
 
 from typing import List, Optional
-from PySide6.QtCore import Qt, QKeyCombination
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
-    QApplication,
     QComboBox,
     QFrame,
     QHBoxLayout,
@@ -18,13 +17,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from py_inbox_helper.ai import AiClient, AiConfig
 from py_inbox_helper.analyzer import EmailAnalyzer
 from py_inbox_helper.backup import BackupManager
 from py_inbox_helper.models import ActionPlan, EmailItem, ExecutionResult
 from py_inbox_helper.planner import ActionPlanner, PlannerPresetConfig
 from py_inbox_helper.provider.base import BaseMailProvider
+from py_inbox_helper.provider.imap_provider import ImapMailProvider, ImapProfileManager
 from py_inbox_helper.provider.mock_provider import MockMailProvider
 from py_inbox_helper.provider.outlook_provider import OutlookComProvider
+from py_inbox_helper.ui.settings_dialog import SettingsDialog
 from py_inbox_helper.ui.styles import DARK_THEME_QSS
 from py_inbox_helper.ui.tabs.analysis_tab import AnalysisTab
 from py_inbox_helper.ui.tabs.backup_tab import BackupTab
@@ -36,7 +38,7 @@ from py_inbox_helper.unsubscribe import UnsubscribeManager
 
 
 class MainWindow(QMainWindow):
-    """Primary application window with windowed and fullscreen modes."""
+    """Primary application window with windowed and fullscreen modes, AI, and IMAP support."""
 
     def __init__(self, provider: Optional[BaseMailProvider] = None):
         super().__init__()
@@ -44,10 +46,10 @@ class MainWindow(QMainWindow):
         self.resize(1200, 800)
 
         # Initialize core services
+        self.imap_manager = ImapProfileManager()
         if provider is not None:
             self.provider = provider
         else:
-            # Check Outlook availability, fallback to Mock if Outlook is unavailable
             outlook_prov = OutlookComProvider()
             if outlook_prov.is_available():
                 self.provider = outlook_prov
@@ -56,6 +58,9 @@ class MainWindow(QMainWindow):
 
         self.backup_manager = BackupManager()
         self.analyzer = EmailAnalyzer()
+        self.ai_config = AiConfig()
+        self.ai_client = AiClient(self.ai_config)
+
         self.preset_config = PlannerPresetConfig()
         self.planner = ActionPlanner(self.preset_config)
         self.unsubscribe_manager = UnsubscribeManager()
@@ -100,20 +105,28 @@ class MainWindow(QMainWindow):
         header_layout.addStretch()
 
         # Provider Selector
-        prov_label = QLabel("Provider-Modus:")
+        prov_label = QLabel("Provider:")
         prov_label.setStyleSheet("color: #94a3b8; font-size: 12px;")
         self.provider_combo = QComboBox()
         self.provider_combo.addItem("Microsoft Outlook (Desktop)", "OUTLOOK")
+        self.provider_combo.addItem("Generisches IMAP-Konto", "IMAP")
         self.provider_combo.addItem("Demo-Modus (Mock Postfach)", "MOCK")
 
         if isinstance(self.provider, OutlookComProvider):
             self.provider_combo.setCurrentIndex(0)
-        else:
+        elif isinstance(self.provider, ImapMailProvider):
             self.provider_combo.setCurrentIndex(1)
+        else:
+            self.provider_combo.setCurrentIndex(2)
 
         self.provider_combo.currentIndexChanged.connect(self._on_provider_mode_changed)
         header_layout.addWidget(prov_label)
         header_layout.addWidget(self.provider_combo)
+
+        # Settings Button
+        self.settings_btn = QPushButton("Einstellungen (KI, IMAP, VIP)")
+        self.settings_btn.clicked.connect(self._open_settings)
+        header_layout.addWidget(self.settings_btn)
 
         # Fullscreen Toggle Button (User Rule 4)
         self.fullscreen_btn = QPushButton("Vollbild (F11)")
@@ -142,20 +155,24 @@ class MainWindow(QMainWindow):
         self.scan_tab.start_scan_requested.connect(self._start_scan)
         self.scan_tab.cancel_scan_requested.connect(self._cancel_scan)
 
+        self.analysis_tab.add_to_whitelist_requested.connect(self._add_to_whitelist)
+        self.analysis_tab.ai_summarize_requested.connect(self._run_ai_summary)
+        self.analysis_tab.restore_single_requested.connect(self._restore_single_from_latest)
+
         self.rules_tab.generate_plan_requested.connect(self._generate_plan_and_dry_run)
         self.protocol_tab.run_dry_run_requested.connect(self._generate_plan_and_dry_run)
         self.protocol_tab.apply_changes_requested.connect(self._start_execution)
-        self.backup_tab.restore_requested.connect(self._start_restore)
+
+        self.backup_tab.restore_requested.connect(self._start_restore_all)
+        self.backup_tab.restore_items_requested.connect(self._start_restore_items)
 
     def _setup_shortcuts(self):
         """Setup keyboard shortcuts including F11 for Fullscreen / Windowed toggle."""
-        # F11 toggle fullscreen
         self.fullscreen_action = QAction(self)
         self.fullscreen_action.setShortcut(QKeySequence(Qt.Key_F11))
         self.fullscreen_action.triggered.connect(self.toggle_fullscreen)
         self.addAction(self.fullscreen_action)
 
-        # Escape exits fullscreen
         self.esc_action = QAction(self)
         self.esc_action.setShortcut(QKeySequence(Qt.Key_Escape))
         self.esc_action.triggered.connect(self._exit_fullscreen_on_esc)
@@ -175,6 +192,14 @@ class MainWindow(QMainWindow):
             self.showNormal()
             self.fullscreen_btn.setText("Vollbild (F11)")
 
+    def _open_settings(self):
+        dialog = SettingsDialog(self.ai_config, self.analyzer, self.imap_manager, self)
+        if dialog.exec():
+            self.ai_client.config = self.ai_config
+            if self.current_emails:
+                self.analyzer.analyze_batch(self.current_emails)
+                self.analysis_tab.set_emails(self.current_emails)
+
     def _on_provider_mode_changed(self, index: int):
         mode = self.provider_combo.currentData()
         if mode == "OUTLOOK":
@@ -184,16 +209,44 @@ class MainWindow(QMainWindow):
                     self,
                     "Outlook nicht verfügbar",
                     "Microsoft Outlook konnte über COM nicht erreicht werden.\n"
-                    "Stelle sicher, dass Outlook installiert ist. Wechsel zurück zum Demo-Modus.",
+                    "Wechsel zurück zum vorherigen Modus.",
                 )
-                self.provider_combo.setCurrentIndex(1)
+                self.provider_combo.setCurrentIndex(2)
                 return
             self.provider = outlook
+        elif mode == "IMAP":
+            profiles = self.imap_manager.list_profiles()
+            if not profiles:
+                QMessageBox.information(
+                    self,
+                    "Kein IMAP-Konto eingerichtet",
+                    "Es ist noch kein IMAP-Konto eingerichtet. Bitte richte jetzt ein Konto in den Einstellungen ein.",
+                )
+                self._open_settings()
+            self.provider = ImapMailProvider(self.imap_manager)
         else:
             self.provider = MockMailProvider()
 
         self.scan_tab.provider = self.provider
         self.scan_tab.reload_accounts()
+
+    # --- VIP Whitelist & AI Handlers ---
+    def _add_to_whitelist(self, sender: str):
+        if sender not in self.analyzer.config.whitelist_senders:
+            self.analyzer.config.whitelist_senders.append(sender)
+            if self.isVisible():
+                QMessageBox.information(
+                    self,
+                    "VIP-Whitelist aktualisiert",
+                    f"Absender '{sender}' wurde zur Whitelist hinzugefügt und ist nun vor Verschiebung/Löschung geschützt.",
+                )
+            if self.current_emails:
+                self.analyzer.analyze_batch(self.current_emails)
+                self.analysis_tab.set_emails(self.current_emails)
+
+    def _run_ai_summary(self, email: EmailItem):
+        summary = self.ai_client.summarize_email(email)
+        self.analysis_tab.display_ai_summary(summary)
 
     # --- Scan Workflow ---
     def _start_scan(self, account_id: str, folders: List[str], date_from, date_to, max_count):
@@ -222,8 +275,6 @@ class MainWindow(QMainWindow):
         self.current_emails = emails
         self.scan_tab.set_scan_in_progress(False)
         self.scan_tab.set_status_text(f"Scan erfolgreich: {len(emails)} E-Mails geladen und analysiert.")
-
-        # Update analysis tab and switch to it
         self.analysis_tab.set_emails(emails)
         self.tabs.setCurrentIndex(1)
 
@@ -242,14 +293,14 @@ class MainWindow(QMainWindow):
         dry_run_results = self.planner.simulate_dry_run(self.current_plan)
 
         self.protocol_tab.set_simulation_results(self.current_plan, dry_run_results)
-        self.tabs.setCurrentIndex(3)  # Switch to Dry-Run & Protokoll Tab
+        self.tabs.setCurrentIndex(3)
 
     # --- Execution Workflow ---
     def _start_execution(self):
         if not self.current_plan or not self.current_emails:
             return
 
-        self.tabs.setCurrentIndex(4)  # Switch to Backup & Rollback Tab
+        self.tabs.setCurrentIndex(4)
         self.backup_tab.set_status_text("Ausführung wird gestartet...")
         self.backup_tab.append_log("--- Start der Postfach-Bereinigung ---")
 
@@ -282,16 +333,39 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, "Fehler bei der Ausführung", f"Ein Fehler ist aufgetreten:\n{error_msg}")
 
     # --- Restore / Rollback Workflow ---
-    def _start_restore(self, snapshot_id: str):
+    def _start_restore_all(self, snapshot_id: str):
         self._restore_worker = RestoreWorker(
             provider=self.provider,
             backup_manager=self.backup_manager,
             snapshot_id=snapshot_id,
+            item_ids=None,
         )
         self._restore_worker.status_updated.connect(self.backup_tab.set_status_text)
         self._restore_worker.finished.connect(self._on_restore_finished)
         self._restore_worker.failed.connect(self._on_restore_failed)
         self._restore_worker.start()
+
+    def _start_restore_items(self, snapshot_id: str, item_ids: List[str]):
+        self._restore_worker = RestoreWorker(
+            provider=self.provider,
+            backup_manager=self.backup_manager,
+            snapshot_id=snapshot_id,
+            item_ids=item_ids,
+        )
+        self._restore_worker.status_updated.connect(self.backup_tab.set_status_text)
+        self._restore_worker.finished.connect(self._on_restore_finished)
+        self._restore_worker.failed.connect(self._on_restore_failed)
+        self._restore_worker.start()
+
+    def _restore_single_from_latest(self, email_id: str):
+        snapshots = self.backup_manager.list_snapshots()
+        if not snapshots:
+            QMessageBox.information(self, "Kein Backup", "Es ist noch kein Wiederherstellungspunkt vorhanden.")
+            return
+
+        latest_id = snapshots[0]["snapshot_id"]
+        self.tabs.setCurrentIndex(4)
+        self._start_restore_items(latest_id, [email_id])
 
     def _on_restore_finished(self, results: List[dict]):
         self.backup_tab.append_log("--- Rollback erfolgreich abgeschlossen! ---")
@@ -300,7 +374,7 @@ class MainWindow(QMainWindow):
         QMessageBox.information(
             self,
             "Rollback abgeschlossen",
-            f"{len(results)} Elemente wurden erfolgreich in ihren Originalzustand zurückversetzt.",
+            f"{len(results)} Elemente wurden erfolgreich wiederhergestellt.",
         )
 
     def _on_restore_failed(self, error_msg: str):

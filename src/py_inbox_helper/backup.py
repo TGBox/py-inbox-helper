@@ -81,8 +81,17 @@ class BackupManager:
 
     def restore_snapshot(self, snapshot: BackupSnapshot, provider: Any) -> List[Dict[str, Any]]:
         """Restores all items in the snapshot back to their original state using the provider."""
+        return self._restore_item_list(snapshot.items, provider)
+
+    def restore_items_by_id(self, snapshot: BackupSnapshot, item_ids: List[str], provider: Any) -> List[Dict[str, Any]]:
+        """Restores only selected items matching given id or entry_id list."""
+        id_set = set(item_ids)
+        target_items = [i for i in snapshot.items if i.id in id_set or i.entry_id in id_set]
+        return self._restore_item_list(target_items, provider)
+
+    def _restore_item_list(self, items: List[BackupItemState], provider: Any) -> List[Dict[str, Any]]:
         results = []
-        for item in snapshot.items:
+        for item in items:
             try:
                 provider.restore_item(
                     entry_id=item.entry_id,
@@ -92,6 +101,7 @@ class BackupManager:
                     categories=item.categories,
                 )
                 results.append({
+                    "id": item.id,
                     "entry_id": item.entry_id,
                     "subject": item.subject,
                     "success": True,
@@ -99,6 +109,7 @@ class BackupManager:
                 })
             except Exception as ex:
                 results.append({
+                    "id": item.id,
                     "entry_id": item.entry_id,
                     "subject": item.subject,
                     "success": False,

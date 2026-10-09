@@ -96,3 +96,29 @@ def test_classify_archive_old():
     category, reason = analyzer.classify(email)
     assert category == EmailCategory.ARCHIVE_OLD
     assert "Alter" in reason or "Tage" in reason
+
+
+def test_classify_vip_whitelist_sender():
+    config = RuleConfig(whitelist_senders=["chef@unternehmen.de", "@familie.de"])
+    analyzer = EmailAnalyzer(config)
+
+    # Direct match on email
+    email1 = make_email(
+        subject="Wochenbericht & Update",
+        sender_email="chef@unternehmen.de",
+        days_ago=500,  # Even if very old, VIP takes precedence!
+    )
+    cat1, reason1 = analyzer.classify(email1)
+    assert cat1 == EmailCategory.IMPORTANT_ACTION
+    assert "Whitelist" in reason1
+
+    # Domain match
+    email2 = make_email(
+        subject="Familientreffen am Sonntag",
+        sender_email="mama@familie.de",
+        days_ago=250,
+    )
+    cat2, reason2 = analyzer.classify(email2)
+    assert cat2 == EmailCategory.IMPORTANT_ACTION
+    assert "Whitelist" in reason2
+

@@ -36,6 +36,7 @@ class RuleConfig:
     junk_keywords: List[str] = field(default_factory=lambda: [
         "viagra", "casino", "lottery", "gewinnspiel", "krypto-gewinn", "bitcoin profit"
     ])
+    whitelist_senders: List[str] = field(default_factory=list)
 
 
 class BaseEmailClassifier(ABC):
@@ -59,6 +60,12 @@ class EmailAnalyzer(BaseEmailClassifier):
         subject = (email.subject or "").lower()
         preview = (email.body_preview or "").lower()
         combined_text = f"{subject} {preview}"
+
+        # 0. VIP & Whitelist Protection (Takes highest priority)
+        for wl in self.config.whitelist_senders:
+            clean_wl = wl.strip().lower()
+            if clean_wl and (clean_wl in sender or (clean_wl.startswith("@") and sender.endswith(clean_wl))):
+                return EmailCategory.IMPORTANT_ACTION, f"Geschützter VIP-/Whitelist-Absender ({sender})"
 
         # 1. High importance or explicit action required
         if email.importance.lower() == "high":

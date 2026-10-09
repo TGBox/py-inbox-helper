@@ -87,3 +87,47 @@ def test_main_window_full_workflow_end_to_end(qapp, tmp_path: Path):
     restore_results = window.backup_manager.restore_snapshot(snapshot, mock_provider)
     assert len(restore_results) == len(window.current_emails)
     assert all(r["success"] is True for r in restore_results)
+
+
+def test_main_window_sender_clusters_and_whitelist(qapp, tmp_path: Path):
+    mock_provider = MockMailProvider()
+    window = MainWindow(provider=mock_provider)
+    window.backup_manager.backup_dir = tmp_path
+
+    emails = mock_provider.fetch_emails("acc-1", ["Posteingang"])
+    window._on_scan_finished(emails)
+
+    # Check clusters populated
+    assert len(window.analysis_tab._sender_clusters) > 0
+    assert window.analysis_tab.cluster_table.rowCount() == len(window.analysis_tab._sender_clusters)
+
+    # Whitelist a sender
+    initial_wl_count = len(window.analyzer.config.whitelist_senders)
+    target_sender = window.analysis_tab._sender_clusters[0].sender_email
+    window._add_to_whitelist(target_sender)
+
+    assert len(window.analyzer.config.whitelist_senders) == initial_wl_count + 1
+    assert target_sender in window.analyzer.config.whitelist_senders
+
+
+def test_main_window_granular_restore_flow(qapp, tmp_path: Path):
+    mock_provider = MockMailProvider()
+    window = MainWindow(provider=mock_provider)
+    window.backup_manager.backup_dir = tmp_path
+
+    emails = mock_provider.fetch_emails("acc-1", ["Posteingang"])
+    snapshot = window.backup_manager.create_snapshot("acc-1", emails)
+    window.backup_manager.save_snapshot(snapshot)
+
+    window.backup_tab.reload_snapshots()
+    assert window.backup_tab.table.rowCount() >= 1
+
+    # Check items populated in items_table
+    assert window.backup_tab.items_table.rowCount() == len(emails)
+
+    # Granular restore
+    target_id = emails[0].id
+    results = window.backup_manager.restore_items_by_id(snapshot, [target_id], mock_provider)
+    assert len(results) == 1
+    assert results[0]["success"] is True
+

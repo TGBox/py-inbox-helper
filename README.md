@@ -6,14 +6,15 @@ Eine moderne Python-Desktop-Anwendung (PySide6), um ein lange vernachlässigtes,
 
 ## Hauptfunktionen
 
-- **Microsoft 365 / Outlook Desktop Integration**:
+- **Microsoft 365 / Outlook Desktop & Generischer IMAP-Support**:
   - Direkte MAPI-Anbindung an die lokale Microsoft Outlook Installation (`pywin32`) – keine umständliche Azure App Registration oder Administrator-Consent erforderlich.
+  - **Generischer IMAP-Provider (`ImapMailProvider`)**: Unterstützt Gmail, GMX, Web.de und eigene Mailserver mit lokaler Profilverwaltung.
   - Unterstützt mehrere eingerichtete Konten und geteilte Postfächer (Shared Mailboxes).
-  - Anbieterunabhängige Architektur (`BaseMailProvider`), sodass künftig auch andere Protokolle (IMAP, Microsoft Graph REST API) nahtlos angebunden werden können.
-  - Enthält einen integrierten **Demo-/Mock-Modus** zum risikolosen Testen ohne aktives Outlook.
+  - Integrierter **Demo-/Mock-Modus** zum risikolosen Testen ohne aktives Postfach.
 
-- **Intelligente E-Mail-Analyse & Kategorisierung**:
+- **Intelligente E-Mail-Analyse & VIP-Whitelist-Schutz**:
   - Schnelle, regelbasierte Heuristik (List-Unsubscribe-Header, Betreffmuster, Absender, Alter, Priorität).
+  - **VIP- & Whitelist-Schutz**: Geschützte Absender/Domains (z. B. Familie, Vorgesetzte, Kunden) werden automatisch vor Löschung oder Archivierung geschützt.
   - Erkennung von:
     - **Newsletter & Werbung** (inkl. Prüfung auf One-Click-Abmeldung nach RFC 8058/2369)
     - **Rechnungen & Finanzen** (automatische Zuordnung & Tagging)
@@ -22,11 +23,20 @@ Eine moderne Python-Desktop-Anwendung (PySide6), um ein lange vernachlässigtes,
     - **Wiedervorlage** (Erinnerungen, Nachfassen)
     - **Alte E-Mails / Archiv** (strukturierte Jahres-Unterordner wie `06_Archiv/2024`)
     - **Junk / Unerwünscht** (Verschieben in Gelöschte Elemente)
-  - Modulares Design mit `BaseEmailClassifier`: Lokale KI-Modelle (z. B. Ollama / lokales LLM) können jederzeit als zusätzliches Klassifizierungs-Backend nachgerüstet werden.
+
+- **Top-Absender-Clustering & Speicherplatz-Finder**:
+  - Gruppierung aller E-Mails nach Absender mit Anzeige von Gesamtzahl, ungelesenen Mails und verbrauchtem Speicherplatz in MB.
+  - Größenfilter für E-Mails (`> 1 MB`, `> 5 MB`, `> 10 MB`, `> 25 MB`), um gezielt Speicherfresser aufzuspüren.
+  - 1-Klick-Aktionen zur Filterung und Absender-Whitelist-Aufnahme.
+
+- **Hybrid-KI-Integration (Ollama / Cloud-Modelle)**:
+  - Verbindung zu lokalem Ollama (`http://localhost:11434`, z. B. `llama3.2`, `mistral`) oder OpenAI-kompatiblen Cloud-Endpunkten.
+  - 1-Klick-Zusammenfassungen im Vorschau-Panel (Kernbotschaft in 1–2 Sätzen).
+  - Automatischer Fallback auf Heuristik, falls kein KI-Modell aktiv ist.
 
 - **Smarte Voreinstellungen & Feingranularer Regel-Editor**:
   - Konfigurierbare Zielordner (z. B. `01_Wiedervorlage`, `02_Wichtig`, `03_Rechnungen & Finanzen`, `04_Newsletter`, `05_Benachrichtigungen`, `06_Archiv/{Jahr}`).
-  - Zielordner werden bei Bedarf automatisch in Outlook angelegt.
+  - Zielordner werden bei Bedarf automatisch im Postfach angelegt.
   - Individuelle Einstellung pro Kategorie: Als gelesen markieren, Jahresordner anlegen, Newsletter abmelden, Kategorien/Flags vergeben.
 
 - **Dry-Run Simulation & Änderungsprotokoll**:
@@ -35,13 +45,14 @@ Eine moderne Python-Desktop-Anwendung (PySide6), um ein lange vernachlässigtes,
   - Export des Änderungsprotokolls als ansprechender **HTML-Bericht** und als **JSON-Datei**.
   - **Ausdrückliche Nutzer-Freigabe**: Änderungen werden erst nach Bestätigung angewendet.
 
-- **Ausfallschutz & 1-Klick Rollback (Backup)**:
+- **Ausfallschutz & Granulares Rollback (Backup)**:
   - Vor der Ausführung wird automatisch ein vollständiger Wiederherstellungspunkt (`BackupSnapshot`) auf der Festplatte gespeichert.
-  - **1-Klick Wiederherstellung**: Stellt alle Elemente im Fehlerfall vollständig in ihre Ursprungsordner und ihren vorherigen Gelesen-/Markierungs-Zustand zurück.
-  - Sanftes Löschen: Löschaktionen verschieben Mails in den Outlook-Papierkorb, nichts wird permanent vernichtet.
+  - **Granulares Rollback**: Neben dem vollständigen Rollback können gezielt einzelne E-Mails aus einem Snapshot wiederhergestellt werden.
+  - Sanftes Löschen: Löschaktionen verschieben Mails in den Papierkorb, nichts wird permanent vernichtet.
 
 - **Moderne Benutzeroberfläche (PySide6)**:
-  - Dunkles, augenschonendes Theme mit klaren Status-Badges, KPI-Metriken und asynchronen Hintergrund-Threads (`QThread`), sodass die Oberfläche niemals einfriert.
+  - Dunkles, augenschonendes Theme mit klaren Status-Badges, KPI-Metriken und asynchronen Hintergrund-Threads (`QThread`).
+  - **Mehrfachauswahl & Kontextmenüs**: Zeilen per Shift/Strg markierbar mit Rechtsklick-Aktionen.
   - **Vollbild- & Fenstermodus**: Umschaltbar per Tastenkombination `F11` (oder Escape zum Beenden) sowie über die Schaltfläche in der Kopfzeile.
 
 ---
@@ -66,7 +77,7 @@ uv run py-inbox-helper
 
 ## Tests ausführen
 
-Die gesamte Geschäftslogik, Heuristik, Unsubscribe-Extraktion, Snapshot-Wiederherstellung und GUI-Integration ist mit pytest abgedeckt:
+Die gesamte Logik, Heuristik, KI-Anbindung, IMAP-Provider, Speicher-Analyse, Snapshot-Wiederherstellung und GUI-Integration ist mit pytest abgedeckt:
 
 ```bash
 uv run pytest
@@ -80,23 +91,27 @@ uv run pytest
 src/py_inbox_helper/
 ├── __init__.py           # Einstiegspunkt (main)
 ├── models.py             # Datenmodelle (EmailItem, PlannedAction, ActionPlan, BackupSnapshot)
-├── analyzer.py           # Regelbasierter E-Mail-Klassifizierer & BaseEmailClassifier
+├── analyzer.py           # Regelbasierter E-Mail-Klassifizierer mit VIP-Whitelist
+├── ai.py                 # Hybrid-KI-Client (Ollama & Cloud REST API)
+├── storage.py            # Speicher-Analyzer & SenderCluster
 ├── planner.py            # Aktionsplanung & Dry-Run-Simulation
 ├── protocol.py           # Erstellung & Export von Änderungsprotokollen (HTML, JSON)
 ├── unsubscribe.py        # RFC 8058 / 2369 Newsletter-Abmelde-Engine
-├── backup.py             # Snapshot-Sicherung & 1-Klick-Rollback
+├── backup.py             # Snapshot-Sicherung & 1-Klick- und Granulares Rollback
 ├── provider/
 │   ├── base.py           # BaseMailProvider Abstraktion
 │   ├── mock_provider.py  # In-Memory Demo-Postfach für Tests
-│   └── outlook_provider.py # Windows COM/MAPI Microsoft Outlook Desktop Client
+│   ├── outlook_provider.py # Windows COM/MAPI Microsoft Outlook Desktop Client
+│   └── imap_provider.py  # Generischer IMAP-Provider (Gmail, GMX, Web.de, Custom)
 └── ui/
     ├── styles.py         # Modernes Dark Theme (QSS)
     ├── workers.py        # Asynchrone QThread-Worker (ScanWorker, ExecutionWorker, RestoreWorker)
+    ├── settings_dialog.py # Dialog für KI-, IMAP- und VIP-Einstellungen
     ├── main_window.py    # Hauptfenster mit F11-Vollbildmodus & Navigation
     └── tabs/
         ├── scan_tab.py       # Postfach- & Ordnerauswahl, Filter
-        ├── analysis_tab.py   # KPI-Karten, E-Mail-Tabelle & Detailansicht
+        ├── analysis_tab.py   # KPI-Karten, E-Mail-Tabelle, Top-Absender & KI-Vorschau
         ├── rules_tab.py      # Ordner-Presets & Regel-Editor
         ├── protocol_tab.py   # Dry-Run Simulation, Freigabe & Export
-        └── backup_tab.py     # Live-Ausführung, Backups & Rollback
+        └── backup_tab.py     # Live-Ausführung, Backups & Granulares Rollback
 ```
