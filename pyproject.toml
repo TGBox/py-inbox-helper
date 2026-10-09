@@ -1,0 +1,17 @@
+[project]
+name = "py-inbox-helper"
+version = "0.1.1"
+description = "A python GUI application to help manage a chaotic and neglected email inbox of a busy person."
+readme = "README.md"
+authors = [
+    { name = "Daniel Rösch", email = "droesch91@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = []
+
+[project.scripts]
+py-inbox-helper = "py_inbox_helper:main"
+
+[build-system]
+requires = ["uv_build>=0.12.6,<0.13.0"]
+build-backend = "uv_build"
