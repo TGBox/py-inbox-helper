@@ -1,8 +1,12 @@
 # Changelog
 
+## SemVer v1.0.0
+
+- 2026-10-09 (9083493): first draft with full functionality
+
 ## SemVer v0.1.6
 
-- 2026-10-09 (bb94b9a): small change in changelog to test the new post-commit hook
+- 2026-10-09 (f6e7868): small change in changelog to test the new post-commit hook
 
 ## SemVer v0.1.5
 
