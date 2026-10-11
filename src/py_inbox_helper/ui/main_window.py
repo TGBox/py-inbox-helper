@@ -129,6 +129,7 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.scan_tab = ScanTab(self.provider)
         self.analysis_tab = AnalysisTab()
+        self.analysis_tab.set_ai_client(self.ai_client)
         self.rules_tab = RulesTab(self.preset_config)
         self.protocol_tab = ProtocolTab()
         self.backup_tab = BackupTab(self.backup_manager)
@@ -303,6 +304,7 @@ class MainWindow(QMainWindow):
         dialog = SettingsDialog(self.ai_config, self.analyzer, self.imap_manager, self, initial_tab=initial_tab)
         if dialog.exec():
             self.ai_client.config = self.ai_config
+            self.analysis_tab.set_ai_client(self.ai_client)
             self._refresh_provider_combo()
             if isinstance(self.provider, ImapMailProvider):
                 self.scan_tab.reload_accounts()

@@ -1,7 +1,7 @@
 """Analysis overview tab displaying KPI metric cards, filters, sender clusters, and email table."""
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Any, List, Optional
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
+    QTextBrowser,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -28,6 +29,7 @@ from PySide6.QtWidgets import (
 from py_inbox_helper.models import EmailCategory, EmailItem
 from py_inbox_helper.storage import SenderCluster, StorageAnalyzer, format_bytes
 from py_inbox_helper.ui.styles import CATEGORY_COLORS
+from py_inbox_helper.ui.email_preview_dialog import EmailPreviewDialog
 
 
 class MetricCard(QFrame):
@@ -97,6 +99,7 @@ class AnalysisTab(QWidget):
     add_to_whitelist_requested = Signal(str)
     ai_summarize_requested = Signal(object)
     restore_single_requested = Signal(str)
+    open_preview_requested = Signal(object)
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -104,7 +107,15 @@ class AnalysisTab(QWidget):
         self._filtered_emails: List[EmailItem] = []
         self.storage_analyzer = StorageAnalyzer()
         self._sender_clusters: List[SenderCluster] = []
+        self._preview_dialog: Optional[EmailPreviewDialog] = None
+        self.ai_client: Optional[Any] = None
         self._init_ui()
+
+    def set_ai_client(self, ai_client: Any) -> None:
+        """Sets the AI client for summarization in the preview dialog."""
+        self.ai_client = ai_client
+        if self._preview_dialog:
+            self._preview_dialog.ai_client = ai_client
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -229,6 +240,7 @@ class AnalysisTab(QWidget):
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_table_context_menu)
         self.table.itemSelectionChanged.connect(self._on_row_selected)
+        self.table.itemDoubleClicked.connect(self._on_table_double_clicked)
         splitter.addWidget(self.table)
 
         # Preview Panel with AI Summarize and VIP Whitelist Buttons
@@ -242,6 +254,11 @@ class AnalysisTab(QWidget):
         prev_header.addWidget(prev_title)
         prev_header.addStretch()
 
+        self.open_preview_btn = QPushButton("Vorschau-Fenster öffnen")
+        self.open_preview_btn.setToolTip("Öffnet die ausgewählte E-Mail in einem separaten Vorschau-Fenster mit Vollbildunterstützung (Doppelklick)")
+        self.open_preview_btn.clicked.connect(lambda: self.open_preview_window())
+        self.open_preview_btn.setEnabled(False)
+
         self.whitelist_btn = QPushButton("Absender als VIP")
         self.whitelist_btn.setToolTip("Diesen Absender zur Whitelist / VIP hinzufügen")
         self.whitelist_btn.clicked.connect(self._whitelist_current_email)
@@ -251,14 +268,17 @@ class AnalysisTab(QWidget):
         self.ai_summary_btn.clicked.connect(self._trigger_ai_summary)
         self.ai_summary_btn.setEnabled(False)
 
+        prev_header.addWidget(self.open_preview_btn)
         prev_header.addWidget(self.whitelist_btn)
         prev_header.addWidget(self.ai_summary_btn)
         prev_layout.addLayout(prev_header)
 
-        self.preview_text = QTextEdit()
+        self.preview_text = QTextBrowser()
         self.preview_text.setReadOnly(True)
         self.preview_text.setMinimumHeight(100)
         self.preview_text.setPlaceholderText("Wähle eine E-Mail aus der Tabelle für Details und Vorschau...")
+        self.preview_text.setOpenLinks(False)
+        self.preview_text.anchorClicked.connect(lambda _: self.open_preview_window())
         prev_layout.addWidget(self.preview_text)
         splitter.addWidget(preview_box)
 
@@ -381,6 +401,12 @@ class AnalysisTab(QWidget):
             filtered.append(e)
 
         self._filtered_emails = filtered
+        if self._preview_dialog and self._preview_dialog.isVisible():
+            self._preview_dialog.emails = self._filtered_emails
+            if self._filtered_emails:
+                self._preview_dialog.set_email(0)
+            else:
+                self._preview_dialog._load_current_email()
         self._sync_active_card()
         self._render_table()
 
@@ -469,6 +495,7 @@ class AnalysisTab(QWidget):
             )
             self.whitelist_btn.setEnabled(False)
             self.ai_summary_btn.setEnabled(False)
+            self.open_preview_btn.setEnabled(False)
             return
 
         row = selected_rows[0].row()
@@ -476,6 +503,7 @@ class AnalysisTab(QWidget):
             email = self._filtered_emails[row]
             self.whitelist_btn.setEnabled(bool(email.sender_email))
             self.ai_summary_btn.setEnabled(True)
+            self.open_preview_btn.setEnabled(True)
 
             cat_key = email.assigned_category.name if hasattr(email.assigned_category, "name") else str(email.assigned_category)
             cat_meta = CATEGORY_COLORS.get(
@@ -525,6 +553,9 @@ class AnalysisTab(QWidget):
                 <div style="background-color: #0d1117; border-left: 3px solid #38bdf8; padding: 10px 14px; border-radius: 4px; font-size: 12px; color: #e2e8f0; line-height: 1.6;">
                     {body_preview_escaped}
                 </div>
+                <div style="margin-top: 8px; text-align: right;">
+                    <a href="#open_preview" style="color: #38bdf8; text-decoration: none; font-size: 11px; font-weight: 600;">🗗 Im Vorschau-Fenster öffnen (Vollbild verfügbar)</a>
+                </div>
             </div>
             """
             self.preview_text.setHtml(html)
@@ -551,6 +582,12 @@ class AnalysisTab(QWidget):
 
     def display_ai_summary(self, summary_text: str):
         self.ai_summary_btn.setEnabled(True)
+        selected_rows = self.table.selectionModel().selectedRows()
+        if selected_rows and selected_rows[0].row() < len(self._filtered_emails):
+            email = self._filtered_emails[selected_rows[0].row()]
+            if self._preview_dialog:
+                self._preview_dialog.set_ai_summary_for_email(email.id, summary_text)
+
         escaped_summary = (
             summary_text.replace("&", "&amp;")
             .replace("<", "&lt;")
@@ -566,6 +603,54 @@ class AnalysisTab(QWidget):
         current_html = self.preview_text.toHtml()
         self.preview_text.setHtml(callout + current_html)
 
+    def _on_table_double_clicked(self, item: QTableWidgetItem):
+        """Opens preview dialog when double-clicking any email row."""
+        row = item.row()
+        if 0 <= row < len(self._filtered_emails):
+            self.table.setCurrentCell(row, 0)
+            self.table.selectRow(row)
+            self.open_preview_window(self._filtered_emails[row])
+        else:
+            self.open_preview_window()
+
+    def open_preview_window(self, email: Optional[EmailItem] = None):
+        """Opens or brings to front the dedicated EmailPreviewDialog."""
+        if not self._filtered_emails:
+            return
+
+        target_index = 0
+        if email is not None and email in self._filtered_emails:
+            target_index = self._filtered_emails.index(email)
+        else:
+            selected_rows = self.table.selectionModel().selectedRows()
+            if selected_rows:
+                target_index = selected_rows[0].row()
+
+        if self._preview_dialog is None:
+            self._preview_dialog = EmailPreviewDialog(
+                emails=self._filtered_emails,
+                current_index=target_index,
+                ai_client=self.ai_client,
+                parent=self.window(),
+            )
+            self._preview_dialog.whitelist_requested.connect(self.add_to_whitelist_requested.emit)
+            self._preview_dialog.ai_summary_requested.connect(self.ai_summarize_requested.emit)
+            self._preview_dialog.email_changed.connect(self._on_preview_dialog_email_changed)
+        else:
+            self._preview_dialog.emails = self._filtered_emails
+            self._preview_dialog.ai_client = self.ai_client
+            self._preview_dialog.set_email(target_index)
+
+        self._preview_dialog.show()
+        self._preview_dialog.raise_()
+        self._preview_dialog.activateWindow()
+
+    def _on_preview_dialog_email_changed(self, new_index: int):
+        """Syncs table row selection when user navigates inside preview dialog."""
+        if 0 <= new_index < self.table.rowCount():
+            self.table.setCurrentCell(new_index, 0)
+            self.table.selectRow(new_index)
+
     def _show_table_context_menu(self, pos):
         selected_rows = self.table.selectionModel().selectedRows()
         if not selected_rows:
@@ -575,12 +660,15 @@ class AnalysisTab(QWidget):
         row = selected_rows[0].row()
         email = self._filtered_emails[row] if row < len(self._filtered_emails) else None
 
+        preview_action = menu.addAction("E-Mail im Vorschau-Fenster öffnen")
         whitelist_action = menu.addAction(f"Absender '{email.sender_email}' zur VIP-Whitelist hinzufügen") if email else None
         ai_action = menu.addAction("KI-Zusammenfassung anfordern")
         restore_action = menu.addAction("Aus letztem Backup wiederherstellen (Einzel-Rollback)")
 
         chosen = menu.exec(self.table.viewport().mapToGlobal(pos))
-        if chosen == whitelist_action and email:
+        if chosen == preview_action:
+            self.open_preview_window(email)
+        elif chosen == whitelist_action and email:
             self.add_to_whitelist_requested.emit(email.sender_email)
         elif chosen == ai_action:
             self._trigger_ai_summary()

@@ -53,6 +53,8 @@ class EmailItem:
     sender_email: str
     received_time: datetime
     body_preview: str = ""
+    body_text: str = ""
+    body_html: str = ""
     is_read: bool = False
     importance: str = "normal"  # low, normal, high
     categories: List[str] = field(default_factory=list)
@@ -61,6 +63,11 @@ class EmailItem:
     headers: Dict[str, str] = field(default_factory=dict)
     assigned_category: EmailCategory = EmailCategory.UNCLASSIFIED
     classification_reason: str = ""
+
+    @property
+    def display_body(self) -> str:
+        """Returns the best available body text or preview."""
+        return self.body_text or self.body_preview or ""
 
     def __post_init__(self):
         if self.received_time is not None:
@@ -126,6 +133,8 @@ class EmailItem:
             "sender_email": self.sender_email,
             "received_time": self.received_time.isoformat(),
             "body_preview": self.body_preview,
+            "body_text": self.body_text,
+            "body_html": self.body_html,
             "is_read": self.is_read,
             "importance": self.importance,
             "categories": self.categories,

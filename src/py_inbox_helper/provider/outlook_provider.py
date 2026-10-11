@@ -197,6 +197,8 @@ class OutlookComProvider(BaseMailProvider):
 
                     categories_list = [c.strip() for c in (item.Categories or "").split(",") if c.strip()]
 
+                    body_raw = getattr(item, "Body", "") or ""
+                    html_raw = getattr(item, "HTMLBody", "") or ""
                     email_item = EmailItem(
                         id=f"{item.EntryID}_{idx}",
                         entry_id=item.EntryID,
@@ -206,7 +208,9 @@ class OutlookComProvider(BaseMailProvider):
                         sender_name=getattr(item, "SenderName", "") or "",
                         sender_email=getattr(item, "SenderEmailAddress", "") or "",
                         received_time=recv_time,
-                        body_preview=(item.Body[:300] if item.Body else ""),
+                        body_preview=(body_raw[:300] if body_raw else ""),
+                        body_text=body_raw,
+                        body_html=html_raw,
                         is_read=not bool(item.UnRead),
                         importance=importance_str,
                         categories=categories_list,

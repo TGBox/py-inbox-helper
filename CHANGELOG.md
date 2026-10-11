@@ -2,7 +2,8 @@
 
 ## SemVer v1.2.1
 
-- 2026-10-10 (64ed606): feat(hooks): apply upgrade function from py-project-init on this repository to create agent rules and skills, as well as git hooks
+- 2026-10-11 (4efc733): feat(preview): add new email preview feature in app
+- 2026-10-10 (b6838d7): feat(hooks): apply upgrade function from py-project-init on this repository to create agent rules and skills, as well as git hooks
 - 2026-10-09 (f999c2e): fix bug with naive vs direct datetime values
 
 ## SemVer v1.2.0
