@@ -30,6 +30,7 @@ class ScanTab(QWidget):
 
     start_scan_requested = Signal(str, list, object, object, object)  # account_id, folders, date_from, date_to, max_count
     cancel_scan_requested = Signal()
+    load_analysis_requested = Signal()
 
     def __init__(self, provider: BaseMailProvider, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -211,6 +212,11 @@ class ScanTab(QWidget):
         self.status_label = QLabel("Bereit zum Scannen.")
         self.status_label.setStyleSheet("color: #38bdf8; font-weight: 500;")
         act_layout.addWidget(self.status_label)
+
+        self.load_saved_btn = QPushButton("📂 Zuvor gespeicherte Analyse laden...")
+        self.load_saved_btn.setToolTip("Lädt eine früher gespeicherte Analyse-Sitzung, ohne das Postfach erneut scannen zu müssen")
+        self.load_saved_btn.clicked.connect(self.load_analysis_requested.emit)
+        act_layout.addWidget(self.load_saved_btn)
 
         right_layout.addWidget(action_box)
         right_layout.addStretch()

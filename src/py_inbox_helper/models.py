@@ -145,6 +145,96 @@ class EmailItem:
             "classification_reason": self.classification_reason,
         }
 
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> EmailItem:
+        """Constructs an EmailItem instance from a dictionary."""
+        raw_time = data.get("received_time")
+        if isinstance(raw_time, str):
+            try:
+                received_time = datetime.fromisoformat(raw_time)
+            except Exception:
+                received_time = datetime.now(timezone.utc)
+        elif isinstance(raw_time, datetime):
+            received_time = raw_time
+        else:
+            received_time = datetime.now(timezone.utc)
+
+        raw_cat = data.get("assigned_category", EmailCategory.UNCLASSIFIED.value)
+        try:
+            assigned_category = EmailCategory(raw_cat)
+        except ValueError:
+            assigned_category = EmailCategory.UNCLASSIFIED
+
+        return cls(
+            id=data["id"],
+            entry_id=data.get("entry_id", data["id"]),
+            store_id=data.get("store_id", ""),
+            account_name=data.get("account_name", ""),
+            subject=data.get("subject", ""),
+            sender_name=data.get("sender_name", ""),
+            sender_email=data.get("sender_email", ""),
+            received_time=received_time,
+            body_preview=data.get("body_preview", ""),
+            body_text=data.get("body_text", ""),
+            body_html=data.get("body_html", ""),
+            is_read=data.get("is_read", False),
+            importance=data.get("importance", "normal"),
+            categories=list(data.get("categories", [])),
+            folder_path=data.get("folder_path", "Posteingang"),
+            size_bytes=data.get("size_bytes", 0),
+            headers=dict(data.get("headers", {})),
+            assigned_category=assigned_category,
+            classification_reason=data.get("classification_reason", ""),
+        )
+
+
+@dataclass
+class AnalysisSession:
+    """A persisted analysis session representing analyzed emails ready for planning."""
+    session_id: str
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    account_id: str = ""
+    account_name: str = ""
+    emails: List[EmailItem] = field(default_factory=list)
+    notes: str = ""
+
+    def __post_init__(self):
+        if self.created_at is not None:
+            self.created_at = ensure_utc(self.created_at)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "session_id": self.session_id,
+            "created_at": self.created_at.isoformat() if self.created_at else datetime.now(timezone.utc).isoformat(),
+            "account_id": self.account_id,
+            "account_name": self.account_name,
+            "notes": self.notes,
+            "emails": [e.to_dict() for e in self.emails],
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> AnalysisSession:
+        raw_time = data.get("created_at")
+        if isinstance(raw_time, str):
+            try:
+                created_at = datetime.fromisoformat(raw_time)
+            except Exception:
+                created_at = datetime.now(timezone.utc)
+        elif isinstance(raw_time, datetime):
+            created_at = raw_time
+        else:
+            created_at = datetime.now(timezone.utc)
+
+        raw_emails = data.get("emails", [])
+        return cls(
+            session_id=data.get("session_id", ""),
+            created_at=created_at,
+            account_id=data.get("account_id", ""),
+            account_name=data.get("account_name", ""),
+            notes=data.get("notes", ""),
+            emails=[EmailItem.from_dict(e) for e in raw_emails if isinstance(e, dict)],
+        )
+
 
 @dataclass
 class PlannedAction:

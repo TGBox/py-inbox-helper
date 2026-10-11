@@ -100,6 +100,8 @@ class AnalysisTab(QWidget):
     ai_summarize_requested = Signal(object)
     restore_single_requested = Signal(str)
     open_preview_requested = Signal(object)
+    save_analysis_requested = Signal()
+    load_analysis_requested = Signal()
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -173,6 +175,18 @@ class AnalysisTab(QWidget):
         view_toggle_layout.addWidget(self.view_emails_btn)
         view_toggle_layout.addWidget(self.view_clusters_btn)
         view_toggle_layout.addStretch()
+
+        self.save_analysis_btn = QPushButton("💾 Analyse speichern")
+        self.save_analysis_btn.setToolTip("Speichert das aktuelle Analyseergebnis für spätere Wiederaufnahme")
+        self.save_analysis_btn.clicked.connect(self.save_analysis_requested.emit)
+        self.save_analysis_btn.setEnabled(False)
+
+        self.load_analysis_btn = QPushButton("📂 Analyse laden...")
+        self.load_analysis_btn.setToolTip("Lädt eine früher gespeicherte Analyse-Sitzung")
+        self.load_analysis_btn.clicked.connect(self.load_analysis_requested.emit)
+
+        view_toggle_layout.addWidget(self.save_analysis_btn)
+        view_toggle_layout.addWidget(self.load_analysis_btn)
         layout.addLayout(view_toggle_layout)
 
         # Stacked Views
@@ -358,6 +372,7 @@ class AnalysisTab(QWidget):
         """Populates the tab with analyzed emails and updates KPI counts and sender clusters."""
         self._emails = emails
         self._sender_clusters = self.storage_analyzer.cluster_by_sender(emails)
+        self.save_analysis_btn.setEnabled(len(emails) > 0)
         self._update_kpi_cards()
         self._render_clusters()
         self._apply_filter()

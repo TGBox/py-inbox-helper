@@ -1,6 +1,7 @@
 """Main application window with navigation, fullscreen/windowed toggles, AI, and IMAP support."""
 from __future__ import annotations
 
+from datetime import datetime
 from typing import List, Optional
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence, QShortcut
@@ -8,6 +9,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -18,15 +20,17 @@ from PySide6.QtWidgets import (
 )
 
 from py_inbox_helper.ai import AiClient, AiConfig
+from py_inbox_helper.analysis_storage import AnalysisStorageManager
 from py_inbox_helper.analyzer import EmailAnalyzer
 from py_inbox_helper.backup import BackupManager
-from py_inbox_helper.models import ActionPlan, EmailItem, ExecutionResult
+from py_inbox_helper.models import ActionPlan, AnalysisSession, EmailItem, ExecutionResult
 from py_inbox_helper.planner import ActionPlanner, PlannerPresetConfig
 from py_inbox_helper.provider.base import BaseMailProvider
 from py_inbox_helper.provider.imap_provider import ImapMailProvider, ImapProfileManager
 from py_inbox_helper.provider.mock_provider import MockMailProvider
 from py_inbox_helper.provider.outlook_provider import OutlookComProvider
 from py_inbox_helper.storage import format_bytes
+from py_inbox_helper.ui.saved_analyses_dialog import SavedAnalysesDialog
 from py_inbox_helper.ui.settings_dialog import SettingsDialog
 from py_inbox_helper.ui.styles import DARK_THEME_QSS
 from py_inbox_helper.ui.tabs.analysis_tab import AnalysisTab
@@ -58,6 +62,7 @@ class MainWindow(QMainWindow):
                 self.provider = MockMailProvider()
 
         self.backup_manager = BackupManager()
+        self.analysis_storage = AnalysisStorageManager()
         self.analyzer = EmailAnalyzer()
         self.ai_config = AiConfig()
         self.ai_client = AiClient(self.ai_config)
@@ -169,10 +174,13 @@ class MainWindow(QMainWindow):
         # Wire Tab Signals
         self.scan_tab.start_scan_requested.connect(self._start_scan)
         self.scan_tab.cancel_scan_requested.connect(self._cancel_scan)
+        self.scan_tab.load_analysis_requested.connect(self._open_saved_analyses_dialog)
 
         self.analysis_tab.add_to_whitelist_requested.connect(self._add_to_whitelist)
         self.analysis_tab.ai_summarize_requested.connect(self._run_ai_summary)
         self.analysis_tab.restore_single_requested.connect(self._restore_single_from_latest)
+        self.analysis_tab.save_analysis_requested.connect(self._save_current_analysis)
+        self.analysis_tab.load_analysis_requested.connect(self._open_saved_analyses_dialog)
 
         self.rules_tab.generate_plan_requested.connect(self._generate_plan_and_dry_run)
         self.protocol_tab.run_dry_run_requested.connect(self._generate_plan_and_dry_run)
@@ -395,8 +403,83 @@ class MainWindow(QMainWindow):
         self.scan_tab.set_scan_in_progress(False)
         self.scan_tab.set_status_text(f"Scan erfolgreich: {len(emails)} E-Mails geladen und analysiert.")
         self.analysis_tab.set_emails(emails)
+
+        # Auto-persist analysis session so user can resume anytime if app is closed
+        account_name = self.current_account_id
+        if hasattr(self.provider, "list_accounts"):
+            for a in self.provider.list_accounts():
+                if a.id == self.current_account_id:
+                    account_name = a.name
+                    break
+        self.analysis_storage.save_session(
+            account_id=self.current_account_id,
+            account_name=account_name,
+            emails=emails,
+            notes="Automatischer Scan",
+        )
+
         self._update_status_bar()
         self.tabs.setCurrentIndex(1)
+
+    def _save_current_analysis(self):
+        """Manually saves current analyzed emails with a custom note/title."""
+        if not self.current_emails:
+            QMessageBox.information(self, "Hinweis", "Es sind keine analysierten E-Mails zum Speichern vorhanden.")
+            return
+
+        default_name = f"Analyse {datetime.now().strftime('%d.%m.%Y %H:%M')} ({len(self.current_emails)} Mails)"
+        notes, ok = QInputDialog.getText(
+            self,
+            "Analyse speichern",
+            "Bezeichnung / Notiz für diese Analyse eingeben:",
+            text=default_name,
+        )
+        if not ok:
+            return
+
+        account_name = self.current_account_id
+        if hasattr(self.provider, "list_accounts"):
+            for a in self.provider.list_accounts():
+                if a.id == self.current_account_id:
+                    account_name = a.name
+                    break
+
+        session = self.analysis_storage.save_session(
+            account_id=self.current_account_id,
+            account_name=account_name,
+            emails=self.current_emails,
+            notes=notes or default_name,
+        )
+        QMessageBox.information(
+            self,
+            "Analyse gespeichert",
+            f"Die Analyse '{session.session_id}' mit {len(self.current_emails)} E-Mails wurde erfolgreich gespeichert.\n\n"
+            "Du kannst sie jederzeit über 'Analyse laden' wiederherstellen.",
+        )
+
+    def _open_saved_analyses_dialog(self):
+        """Opens SavedAnalysesDialog allowing the user to select and restore a past analysis."""
+        dialog = SavedAnalysesDialog(self.analysis_storage, self)
+        dialog.session_loaded.connect(self._load_analysis_session)
+        dialog.exec()
+
+    def _load_analysis_session(self, session: AnalysisSession, notify: bool = False):
+        """Restores a saved analysis session directly into MainWindow and AnalysisTab."""
+        self.current_emails = session.emails
+        self.current_account_id = session.account_id
+        self.analysis_tab.set_emails(self.current_emails)
+        self._update_status_bar()
+        self.tabs.setCurrentIndex(1)
+        if notify:
+            QMessageBox.information(
+                self,
+                "Analyse geladen",
+                f"Analyse-Sitzung erfolgreich geladen:\n\n"
+                f"• Postfach: {session.account_name or session.account_id or 'Standard'}\n"
+                f"• E-Mails: {len(session.emails)} geladen\n"
+                f"• Notiz: {session.notes or '—'}\n\n"
+                "Du kannst nun direkt mit der Regelerstellung (Schritt 3) oder dem Dry-Run fortfahren.",
+            )
 
     def _on_scan_failed(self, error_msg: str):
         self.scan_tab.set_scan_in_progress(False)
