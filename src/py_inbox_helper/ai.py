@@ -4,7 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import logging
-from typing import Optional, Tuple
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 import requests
 
 from py_inbox_helper.models import EmailCategory, EmailItem
@@ -15,11 +16,52 @@ logger = logging.getLogger(__name__)
 @dataclass
 class AiConfig:
     """Configuration for AI provider (local Ollama or OpenAI-compatible cloud endpoint)."""
-    provider: str = "ollama"  # "ollama", "openai_compatible", "disabled"
+    provider: str = "disabled"  # "disabled", "ollama", "openai_compatible"
     endpoint_url: str = "http://localhost:11434"
     model_name: str = "llama3.2"
     api_key: Optional[str] = None
     timeout_seconds: int = 10
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "provider": self.provider,
+            "endpoint_url": self.endpoint_url,
+            "model_name": self.model_name,
+            "api_key": self.api_key,
+            "timeout_seconds": self.timeout_seconds,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> AiConfig:
+        return cls(
+            provider=data.get("provider", "disabled"),
+            endpoint_url=data.get("endpoint_url", "http://localhost:11434"),
+            model_name=data.get("model_name", "llama3.2"),
+            api_key=data.get("api_key"),
+            timeout_seconds=int(data.get("timeout_seconds", 10)),
+        )
+
+    def save_to_path(self, path: Optional[Path] = None) -> None:
+        target = path or (Path.home() / ".py_inbox_helper" / "ai_config.json")
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with open(target, "w", encoding="utf-8") as f:
+                json.dump(self.to_dict(), f, indent=2)
+        except Exception as ex:
+            logger.warning("Could not save AI config: %s", ex)
+
+    @classmethod
+    def load_from_path(cls, path: Optional[Path] = None) -> AiConfig:
+        target = path or (Path.home() / ".py_inbox_helper" / "ai_config.json")
+        if not target.exists():
+            return cls()
+        try:
+            with open(target, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return cls.from_dict(data)
+        except Exception as ex:
+            logger.warning("Could not load AI config from %s: %s", target, ex)
+            return cls()
 
 
 class AiClient:
@@ -28,24 +70,60 @@ class AiClient:
     def __init__(self, config: Optional[AiConfig] = None):
         self.config = config or AiConfig()
 
-    def is_available(self) -> bool:
-        """Quickly tests if the AI endpoint is alive."""
+    def check_availability(self) -> Tuple[bool, str]:
+        """Tests if the configured AI endpoint is alive and the model is available."""
         if self.config.provider == "disabled":
-            return False
+            return False, "Deaktiviert (Lokale Heuristik)"
 
         try:
             if self.config.provider == "ollama":
                 url = f"{self.config.endpoint_url.rstrip('/')}/api/tags"
                 res = requests.get(url, timeout=3)
-                return res.status_code == 200
+                if res.status_code == 200:
+                    try:
+                        data = res.json()
+                        if isinstance(data, dict) and "models" in data:
+                            model_list = data.get("models", [])
+                            if not model_list:
+                                return False, "Keine Modelle in Ollama gefunden"
+                            target = (self.config.model_name or "").strip().lower()
+                            if target:
+                                model_names = [
+                                    m.get("name", "").lower()
+                                    for m in model_list
+                                    if isinstance(m, dict) and "name" in m
+                                ]
+                                matched = any(
+                                    target == name or name.startswith(f"{target}:") or target in name
+                                    for name in model_names
+                                )
+                                if not matched:
+                                    return False, f"Modell '{self.config.model_name}' nicht in Ollama gefunden"
+                    except Exception:
+                        pass
+                    return True, f"Bereit ({self.config.model_name})"
+                return False, f"Ollama HTTP {res.status_code}"
+
             elif self.config.provider == "openai_compatible":
                 url = f"{self.config.endpoint_url.rstrip('/')}/models"
                 headers = {"Authorization": f"Bearer {self.config.api_key}"} if self.config.api_key else {}
                 res = requests.get(url, headers=headers, timeout=3)
-                return res.status_code in (200, 401)
-        except Exception:
-            return False
-        return False
+                if res.status_code in (200, 401):
+                    return True, f"Bereit ({self.config.model_name})"
+                return False, f"API HTTP {res.status_code}"
+
+        except requests.exceptions.ConnectionError:
+            return False, "Verbindung abgelehnt (Server nicht erreichbar)"
+        except requests.exceptions.Timeout:
+            return False, "Zeitüberschreitung (Timeout)"
+        except Exception as ex:
+            return False, f"Fehler: {ex}"
+
+        return False, "Unbekannter Status"
+
+    def is_available(self) -> bool:
+        """Quickly tests if the AI endpoint is alive."""
+        return self.check_availability()[0]
 
     def generate(self, prompt: str, system_prompt: str = "") -> Optional[str]:
         """Sends a completion request to the configured AI provider."""

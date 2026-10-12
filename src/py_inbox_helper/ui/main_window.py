@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import List, Optional
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QAction, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QComboBox,
@@ -42,6 +42,19 @@ from py_inbox_helper.ui.workers import ExecutionWorker, RestoreWorker, ScanWorke
 from py_inbox_helper.unsubscribe import UnsubscribeManager
 
 
+class AiStatusWorker(QThread):
+    """Background worker to verify AI endpoint and model availability without freezing GUI."""
+    status_checked = Signal(bool, str)
+
+    def __init__(self, ai_client: AiClient, parent=None):
+        super().__init__(parent)
+        self.ai_client = ai_client
+
+    def run(self):
+        is_avail, msg = self.ai_client.check_availability()
+        self.status_checked.emit(is_avail, msg)
+
+
 class MainWindow(QMainWindow):
     """Primary application window with windowed and fullscreen modes, AI, and IMAP support."""
 
@@ -64,8 +77,11 @@ class MainWindow(QMainWindow):
         self.backup_manager = BackupManager()
         self.analysis_storage = AnalysisStorageManager()
         self.analyzer = EmailAnalyzer()
-        self.ai_config = AiConfig()
+        self.ai_config = AiConfig.load_from_path()
         self.ai_client = AiClient(self.ai_config)
+        self._ai_worker: Optional[AiStatusWorker] = None
+        self._ai_is_available: Optional[bool] = None
+        self._ai_status_message: str = ""
 
         self.preset_config = PlannerPresetConfig()
         self.planner = ActionPlanner(self.preset_config)
@@ -160,6 +176,8 @@ class MainWindow(QMainWindow):
         self.status_data_lbl.setStyleSheet("color: #94a3b8; font-size: 11px;")
         self.status_ai_lbl = QLabel("KI: Deaktiviert")
         self.status_ai_lbl.setStyleSheet("color: #64748b; font-size: 11px;")
+        self.status_ai_lbl.setCursor(Qt.PointingHandCursor)
+        self.status_ai_lbl.mousePressEvent = lambda _ev: self._open_settings(initial_tab=0)
 
         status_layout.addWidget(self.status_connection_lbl)
         status_layout.addWidget(self.status_data_lbl)
@@ -216,7 +234,7 @@ class MainWindow(QMainWindow):
         self.analysis_tab.search_input.setFocus()
         self.analysis_tab.search_input.selectAll()
 
-    def _update_status_bar(self):
+    def _update_status_bar(self, check_ai: bool = False):
         """Refreshes status indicators at the bottom bar."""
         # Connection / Provider
         if isinstance(self.provider, OutlookComProvider):
@@ -240,13 +258,47 @@ class MainWindow(QMainWindow):
             self.status_data_lbl.setText("Keine Daten geladen (Postfach noch nicht gescannt)")
 
         # AI Engine status
-        if self.ai_config.provider != "disabled":
-            model = self.ai_config.model_name or "Standard"
-            self.status_ai_lbl.setText(f"✨ KI: Aktiv ({self.ai_config.provider.upper()} - {model})")
-            self.status_ai_lbl.setStyleSheet("color: #a855f7; font-size: 11px; font-weight: 600;")
-        else:
+        if self.ai_config.provider == "disabled":
             self.status_ai_lbl.setText("KI: Deaktiviert (Lokale Heuristik)")
             self.status_ai_lbl.setStyleSheet("color: #64748b; font-size: 11px;")
+            self.status_ai_lbl.setToolTip("Lokale Heuristiken aktiv. LLM-Funktionen sind in den Einstellungen deaktiviert.")
+        else:
+            if check_ai or self._ai_is_available is None:
+                if self._ai_worker is None or not self._ai_worker.isRunning():
+                    prov_name = self.ai_config.provider.upper()
+                    self.status_ai_lbl.setText(f"KI: Prüfe Status ({prov_name})...")
+                    self.status_ai_lbl.setStyleSheet("color: #94a3b8; font-size: 11px;")
+                    self.status_ai_lbl.setToolTip(f"Verbindung zu {self.ai_config.endpoint_url} wird geprüft...")
+                    self._ai_worker = AiStatusWorker(self.ai_client, self)
+                    self._ai_worker.status_checked.connect(self._on_ai_status_checked)
+                    self._ai_worker.start()
+            else:
+                self._render_ai_status(self._ai_is_available, self._ai_status_message)
+
+    def _on_ai_status_checked(self, is_available: bool, message: str):
+        self._ai_is_available = is_available
+        self._ai_status_message = message
+        self._render_ai_status(is_available, message)
+
+    def _render_ai_status(self, is_available: bool, message: str):
+        if self.ai_config.provider == "disabled":
+            self.status_ai_lbl.setText("KI: Deaktiviert (Lokale Heuristik)")
+            self.status_ai_lbl.setStyleSheet("color: #64748b; font-size: 11px;")
+            self.status_ai_lbl.setToolTip("Lokale Heuristiken aktiv. LLM-Funktionen sind in den Einstellungen deaktiviert.")
+            return
+
+        prov = self.ai_config.provider.upper()
+        model = self.ai_config.model_name or "Standard"
+        if is_available:
+            self.status_ai_lbl.setText(f"✨ KI: Bereit ({prov} - {model})")
+            self.status_ai_lbl.setStyleSheet("color: #a855f7; font-size: 11px; font-weight: 600;")
+            self.status_ai_lbl.setToolTip(f"KI einsatzbereit: {message}\nKlicken, um Einstellungen zu öffnen.")
+        else:
+            self.status_ai_lbl.setText(f"⚠️ KI: Offline ({prov})")
+            self.status_ai_lbl.setStyleSheet("color: #f59e0b; font-size: 11px; font-weight: 600;")
+            self.status_ai_lbl.setToolTip(
+                f"Konfigurierte KI nicht erreichbar:\n{message}\nEs werden automatische Fallback-Heuristiken verwendet.\nKlicken, um Einstellungen zu öffnen."
+            )
 
     def toggle_fullscreen(self):
         """Toggles between Fullscreen mode and Windowed mode."""
@@ -319,9 +371,11 @@ class MainWindow(QMainWindow):
             if self.current_emails:
                 self.analyzer.analyze_batch(self.current_emails)
                 self.analysis_tab.set_emails(self.current_emails)
+            self._ai_is_available = None
+            self._update_status_bar(check_ai=True)
         else:
             self._refresh_provider_combo()
-        self._update_status_bar()
+            self._update_status_bar(check_ai=False)
 
     def _on_provider_mode_changed(self, index: int):
         data = self.provider_combo.currentData()
@@ -583,3 +637,9 @@ class MainWindow(QMainWindow):
     def _on_restore_failed(self, error_msg: str):
         self.backup_tab.append_log(f"FEHLER bei Rollback: {error_msg}")
         QMessageBox.critical(self, "Fehler bei Wiederherstellung", f"Ein Fehler ist aufgetreten:\n{error_msg}")
+
+    def closeEvent(self, event):
+        if self._ai_worker and self._ai_worker.isRunning():
+            self._ai_worker.quit()
+            self._ai_worker.wait(1000)
+        super().closeEvent(event)

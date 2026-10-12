@@ -164,14 +164,16 @@ class SettingsDialog(QDialog):
     def _test_ai_connection(self):
         prov = self.ai_provider_combo.currentData()
         endpoint = self.ai_endpoint_edit.text().strip()
+        model = self.ai_model_edit.text().strip()
         key = self.ai_key_edit.text().strip() or None
-        test_client = AiClient(AiConfig(provider=prov, endpoint_url=endpoint, api_key=key))
+        test_client = AiClient(AiConfig(provider=prov, endpoint_url=endpoint, model_name=model, api_key=key))
 
-        if test_client.is_available():
-            self.ai_status_label.setText("Erreichbar und einsatzbereit.")
+        is_avail, msg = test_client.check_availability()
+        if is_avail:
+            self.ai_status_label.setText(f"Erreichbar und einsatzbereit ({msg}).")
             self.ai_status_label.setStyleSheet("color: #10b981; font-weight: 600;")
         else:
-            self.ai_status_label.setText("Nicht erreichbar (Offline oder falsche URL).")
+            self.ai_status_label.setText(f"Nicht erreichbar: {msg}")
             self.ai_status_label.setStyleSheet("color: #ef4444; font-weight: 600;")
 
     def _on_imap_template_changed(self, idx: int):
@@ -224,6 +226,7 @@ class SettingsDialog(QDialog):
         self.ai_config.endpoint_url = self.ai_endpoint_edit.text().strip()
         self.ai_config.model_name = self.ai_model_edit.text().strip()
         self.ai_config.api_key = self.ai_key_edit.text().strip() or None
+        self.ai_config.save_to_path()
 
         # 2. Whitelist
         lines = [line.strip() for line in self.whitelist_edit.toPlainText().splitlines() if line.strip()]

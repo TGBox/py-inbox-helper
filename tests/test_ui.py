@@ -321,5 +321,21 @@ def test_scan_tab_horizontal_splitter_and_quick_pills(qapp, tmp_path: Path):
     assert scan_tab.limit_spin.value() == 0  # 0 indicates 'Keine Begrenzung (Alle)'
 
 
+def test_main_window_ai_status_indicators(qapp, tmp_path: Path):
+    mock_provider = MockMailProvider()
+    window = MainWindow(provider=mock_provider)
+    window.backup_manager.backup_dir = tmp_path
 
+    # Initial state with default disabled AI
+    assert "KI: Deaktiviert" in window.status_ai_lbl.text()
 
+    # Simulate AI check returning offline
+    window.ai_config.provider = "ollama"
+    window._on_ai_status_checked(False, "Verbindung abgelehnt")
+    assert "KI: Offline (OLLAMA)" in window.status_ai_lbl.text()
+    assert "Verbindung abgelehnt" in window.status_ai_lbl.toolTip()
+
+    # Simulate AI check returning online / ready
+    window._on_ai_status_checked(True, "Bereit (llama3.2)")
+    assert "KI: Bereit (OLLAMA" in window.status_ai_lbl.text()
+    assert "einsatzbereit" in window.status_ai_lbl.toolTip()

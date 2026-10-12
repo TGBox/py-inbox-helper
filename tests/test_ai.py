@@ -69,3 +69,68 @@ def test_ai_client_handles_offline_gracefully(mock_post):
     cat, reason = client.classify_email(email)
     assert cat is None
     assert "offline" in reason.lower() or "nicht erreichbar" in reason.lower()
+
+
+def test_ai_config_persistence(tmp_path):
+    cfg_file = tmp_path / "ai_config.json"
+    cfg = AiConfig(provider="ollama", model_name="mistral", endpoint_url="http://localhost:11434")
+    cfg.save_to_path(cfg_file)
+    assert cfg_file.exists()
+
+    loaded = AiConfig.load_from_path(cfg_file)
+    assert loaded.provider == "ollama"
+    assert loaded.model_name == "mistral"
+    assert loaded.endpoint_url == "http://localhost:11434"
+
+
+def test_ai_client_check_availability_disabled():
+    client = AiClient(AiConfig(provider="disabled"))
+    is_avail, msg = client.check_availability()
+    assert is_avail is False
+    assert "Deaktiviert" in msg
+
+
+@patch("requests.get")
+def test_ai_client_check_availability_ollama_no_models(mock_get):
+    mock_get.return_value = MagicMock(
+        status_code=200,
+        json=lambda: {"models": []}
+    )
+    client = AiClient(AiConfig(provider="ollama", model_name="llama3.2"))
+    is_avail, msg = client.check_availability()
+    assert is_avail is False
+    assert "Keine Modelle" in msg
+
+
+@patch("requests.get")
+def test_ai_client_check_availability_ollama_model_missing(mock_get):
+    mock_get.return_value = MagicMock(
+        status_code=200,
+        json=lambda: {"models": [{"name": "qwen2.5:latest"}]}
+    )
+    client = AiClient(AiConfig(provider="ollama", model_name="llama3.2"))
+    is_avail, msg = client.check_availability()
+    assert is_avail is False
+    assert "nicht in Ollama gefunden" in msg
+
+
+@patch("requests.get")
+def test_ai_client_check_availability_ollama_model_found(mock_get):
+    mock_get.return_value = MagicMock(
+        status_code=200,
+        json=lambda: {"models": [{"name": "llama3.2:latest"}]}
+    )
+    client = AiClient(AiConfig(provider="ollama", model_name="llama3.2"))
+    is_avail, msg = client.check_availability()
+    assert is_avail is True
+    assert "Bereit" in msg
+
+
+@patch("requests.get")
+def test_ai_client_check_availability_ollama_offline(mock_get):
+    import requests
+    mock_get.side_effect = requests.exceptions.ConnectionError("Connection refused")
+    client = AiClient(AiConfig(provider="ollama"))
+    is_avail, msg = client.check_availability()
+    assert is_avail is False
+    assert "nicht erreichbar" in msg.lower()
