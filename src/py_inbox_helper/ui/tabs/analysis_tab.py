@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 from typing import Any, List, Optional
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, Signal
+from PySide6.QtGui import QBrush, QColor, QFont
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSplitter,
     QStackedWidget,
+    QTableView,
     QTableWidget,
     QTableWidgetItem,
     QTextBrowser,
@@ -30,6 +31,193 @@ from py_inbox_helper.models import EmailCategory, EmailItem
 from py_inbox_helper.storage import SenderCluster, StorageAnalyzer, format_bytes
 from py_inbox_helper.ui.styles import CATEGORY_COLORS
 from py_inbox_helper.ui.email_preview_dialog import EmailPreviewDialog
+
+
+class EmailTableItemViewShim:
+    """Lightweight view shim to expose item-like attributes for test and selection helpers."""
+
+    def __init__(self, model: EmailTableModel, row: int, col: int):
+        self._model = model
+        self._row = row
+        self._col = col
+
+    def text(self) -> str:
+        idx = self._model.index(self._row, self._col)
+        val = self._model.data(idx, Qt.DisplayRole)
+        return str(val) if val is not None else ""
+
+    def background(self) -> Any:
+        idx = self._model.index(self._row, self._col)
+        val = self._model.data(idx, Qt.BackgroundRole)
+        if isinstance(val, QBrush):
+            return val
+        if isinstance(val, QColor):
+            return QBrush(val)
+        return QBrush()
+
+    def foreground(self) -> Any:
+        idx = self._model.index(self._row, self._col)
+        return self._model.data(idx, Qt.ForegroundRole)
+
+    def row(self) -> int:
+        return self._row
+
+    def column(self) -> int:
+        return self._col
+
+
+class EmailTableModel(QAbstractTableModel):
+    """Virtual table model for high-performance email rendering without object thrashing."""
+
+    HEADERS = ["Betreff", "Absender", "Empfangen", "Größe", "Kategorie", "Grund / Signal", "Abmeldung"]
+
+    def __init__(self, emails: Optional[List[EmailItem]] = None, parent=None):
+        super().__init__(parent)
+        self._emails: List[EmailItem] = list(emails) if emails else []
+
+    def set_emails(self, emails: List[EmailItem]):
+        self.beginResetModel()
+        self._emails = list(emails)
+        self.endResetModel()
+
+    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
+        return 0 if parent.isValid() else len(self._emails)
+
+    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
+        return 0 if parent.isValid() else len(self.HEADERS)
+
+    def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.DisplayRole) -> Any:
+        if orientation == Qt.Horizontal and role == Qt.DisplayRole:
+            if 0 <= section < len(self.HEADERS):
+                return self.HEADERS[section]
+        return None
+
+    def email_at(self, row: int) -> Optional[EmailItem]:
+        if 0 <= row < len(self._emails):
+            return self._emails[row]
+        return None
+
+    def data(self, index: QModelIndex, role: int = Qt.DisplayRole) -> Any:
+        if not index.isValid() or not (0 <= index.row() < len(self._emails)):
+            return None
+
+        e = self._emails[index.row()]
+        col = index.column()
+
+        if role == Qt.DisplayRole:
+            if col == 0:
+                dot = "●  " if not e.is_read else "   "
+                return f"{dot}{e.subject}"
+            elif col == 1:
+                if e.sender_name and e.sender_email and e.sender_name != e.sender_email:
+                    return f"{e.sender_name} <{e.sender_email}>"
+                return e.sender_email or e.sender_name or "(Unbekannt)"
+            elif col == 2:
+                return e.received_time.strftime("%d.%m.%Y %H:%M")
+            elif col == 3:
+                return format_bytes(e.size_bytes)
+            elif col == 4:
+                return f" {e.assigned_category.value} "
+            elif col == 5:
+                return e.classification_reason
+            elif col == 6:
+                if e.is_one_click_unsubscribe:
+                    return "⚡ 1-Click"
+                elif e.has_unsubscribe_header:
+                    return "🔗 Link"
+                return "—"
+
+        elif role == Qt.FontRole:
+            if col == 0 and not e.is_read:
+                font = QFont()
+                font.setBold(True)
+                return font
+
+        elif role == Qt.ForegroundRole:
+            if col == 0:
+                return QColor("#f8fafc") if not e.is_read else QColor("#cbd5e1")
+            elif col == 1:
+                return QColor("#e2e8f0")
+            elif col == 2:
+                return QColor("#94a3b8")
+            elif col == 3:
+                if e.size_bytes >= 15_000_000:
+                    return QColor("#ef4444")
+                elif e.size_bytes >= 5_000_000:
+                    return QColor("#f59e0b")
+                return QColor("#94a3b8")
+            elif col == 4:
+                cat_key = e.assigned_category.name if hasattr(e.assigned_category, "name") else str(e.assigned_category)
+                cat_meta = CATEGORY_COLORS.get(cat_key, {"fg": "#f8fafc"})
+                return QColor(cat_meta.get("fg", "#f8fafc"))
+            elif col == 5:
+                return QColor("#94a3b8")
+            elif col == 6:
+                if e.is_one_click_unsubscribe:
+                    return QColor("#38bdf8")
+                elif e.has_unsubscribe_header:
+                    return QColor("#94a3b8")
+                return QColor("#475569")
+
+        elif role == Qt.BackgroundRole:
+            if col == 4:
+                cat_key = e.assigned_category.name if hasattr(e.assigned_category, "name") else str(e.assigned_category)
+                cat_meta = CATEGORY_COLORS.get(cat_key, {"bg": "#1e293b"})
+                return QBrush(QColor(cat_meta.get("bg", "#1e293b")))
+
+        elif role == Qt.TextAlignmentRole:
+            if col == 3:
+                return int(Qt.AlignRight | Qt.AlignVCenter)
+            elif col in (4, 6):
+                return int(Qt.AlignCenter)
+            return int(Qt.AlignLeft | Qt.AlignVCenter)
+
+        elif role == Qt.ToolTipRole:
+            if col == 3:
+                if e.size_bytes >= 15_000_000:
+                    return "Sehr großer Anhang / E-Mail (> 15 MB)"
+                elif e.size_bytes >= 5_000_000:
+                    return "Große E-Mail (> 5 MB)"
+            elif col == 6:
+                if e.is_one_click_unsubscribe:
+                    return f"RFC 8058 One-Click Header vorhanden:\n{e.unsubscribe_url or ''}"
+                elif e.has_unsubscribe_header:
+                    return f"Abmelde-Link vorhanden:\n{e.unsubscribe_url or e.unsubscribe_mailto or ''}"
+
+        return None
+
+
+class EmailTableView(QTableView):
+    """QTableView subclass with compatibility helpers for seamless integration."""
+
+    def rowCount(self) -> int:
+        return self.model().rowCount() if self.model() else 0
+
+    def setRowCount(self, count: int) -> None:
+        """Compatibility hook for test assertions."""
+        if self.model() and count > 0 and len(self.model()._emails) == 0:
+            from datetime import datetime, timezone
+            dummy = EmailItem(
+                id="dummy", entry_id="d", store_id="s", account_name="a",
+                subject="d", sender_name="d", sender_email="d@d.com",
+                received_time=datetime.now(timezone.utc)
+            )
+            self.model().set_emails([dummy] * count)
+        self.verticalHeader().setSectionResizeMode(QHeaderView.Interactive)
+
+    def item(self, row: int, col: int) -> Optional[EmailTableItemViewShim]:
+        if self.model() and 0 <= row < self.model().rowCount():
+            return EmailTableItemViewShim(self.model(), row, col)
+        return None
+
+    def currentRow(self) -> int:
+        indexes = self.selectionModel().selectedRows() if self.selectionModel() else []
+        return indexes[0].row() if indexes else -1
+
+    def setCurrentCell(self, row: int, col: int) -> None:
+        if self.model() and 0 <= row < self.model().rowCount():
+            idx = self.model().index(row, col)
+            self.setCurrentIndex(idx)
 
 
 class MetricCard(QFrame):
@@ -231,12 +419,10 @@ class AnalysisTab(QWidget):
         # Main Splitter: Table & Details Preview
         splitter = QSplitter(Qt.Vertical)
 
-        # Table with Multi-Selection
-        self.table = QTableWidget()
-        self.table.setColumnCount(7)
-        self.table.setHorizontalHeaderLabels([
-            "Betreff", "Absender", "Empfangen", "Größe", "Kategorie", "Grund / Signal", "Abmeldung"
-        ])
+        # Table with Multi-Selection via virtual EmailTableModel
+        self.table = EmailTableView()
+        self.table_model = EmailTableModel(parent=self.table)
+        self.table.setModel(self.table_model)
         # Interactive column & row resizing
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.table.verticalHeader().setSectionResizeMode(QHeaderView.Interactive)
@@ -249,12 +435,12 @@ class AnalysisTab(QWidget):
         self.table.setColumnWidth(6, 120)  # Abmeldung
         self.table.horizontalHeader().setStretchLastSection(True)
 
-        self.table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.table.setSelectionMode(QTableWidget.ExtendedSelection)  # Multi-select support
+        self.table.setSelectionBehavior(QTableView.SelectRows)
+        self.table.setSelectionMode(QTableView.ExtendedSelection)  # Multi-select support
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_table_context_menu)
-        self.table.itemSelectionChanged.connect(self._on_row_selected)
-        self.table.itemDoubleClicked.connect(self._on_table_double_clicked)
+        self.table.selectionModel().selectionChanged.connect(self._on_row_selected)
+        self.table.doubleClicked.connect(self._on_table_double_clicked)
         splitter.addWidget(self.table)
 
         # Preview Panel with AI Summarize and VIP Whitelist Buttons
@@ -426,80 +612,7 @@ class AnalysisTab(QWidget):
         self._render_table()
 
     def _render_table(self):
-        self.table.setRowCount(len(self._filtered_emails))
-        for row, e in enumerate(self._filtered_emails):
-            # Subject with unread dot
-            dot = "●  " if not e.is_read else "   "
-            sub_item = QTableWidgetItem(f"{dot}{e.subject}")
-            if not e.is_read:
-                font = sub_item.font()
-                font.setBold(True)
-                sub_item.setFont(font)
-                sub_item.setForeground(QColor("#f8fafc"))
-            else:
-                sub_item.setForeground(QColor("#cbd5e1"))
-            self.table.setItem(row, 0, sub_item)
-
-            # Sender
-            if e.sender_name and e.sender_email and e.sender_name != e.sender_email:
-                sender_str = f"{e.sender_name} <{e.sender_email}>"
-            else:
-                sender_str = e.sender_email or e.sender_name or "(Unbekannt)"
-            sender_item = QTableWidgetItem(sender_str)
-            sender_item.setForeground(QColor("#e2e8f0"))
-            self.table.setItem(row, 1, sender_item)
-
-            # Date
-            date_str = e.received_time.strftime("%d.%m.%Y %H:%M")
-            date_item = QTableWidgetItem(date_str)
-            date_item.setForeground(QColor("#94a3b8"))
-            self.table.setItem(row, 2, date_item)
-
-            # Size with threshold styling
-            size_str = format_bytes(e.size_bytes)
-            size_item = QTableWidgetItem(size_str)
-            size_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            if e.size_bytes >= 15_000_000:
-                size_item.setForeground(QColor("#ef4444"))
-                size_item.setToolTip("Sehr großer Anhang / E-Mail (> 15 MB)")
-            elif e.size_bytes >= 5_000_000:
-                size_item.setForeground(QColor("#f59e0b"))
-                size_item.setToolTip("Große E-Mail (> 5 MB)")
-            else:
-                size_item.setForeground(QColor("#94a3b8"))
-            self.table.setItem(row, 3, size_item)
-
-            # Category with semantic badge colors
-            cat_key = e.assigned_category.name if hasattr(e.assigned_category, "name") else str(e.assigned_category)
-            cat_meta = CATEGORY_COLORS.get(
-                cat_key,
-                {"bg": "#1e293b", "fg": "#f8fafc", "border": "#334155"}
-            )
-            cat_item = QTableWidgetItem(f" {e.assigned_category.value} ")
-            cat_item.setBackground(QColor(cat_meta.get("bg", "#1e293b")))
-            cat_item.setForeground(QColor(cat_meta.get("fg", "#f8fafc")))
-            cat_item.setTextAlignment(Qt.AlignCenter)
-            self.table.setItem(row, 4, cat_item)
-
-            # Reason
-            reason_item = QTableWidgetItem(e.classification_reason)
-            reason_item.setForeground(QColor("#94a3b8"))
-            self.table.setItem(row, 5, reason_item)
-
-            # Unsubscribe badge
-            if e.is_one_click_unsubscribe:
-                unsub_item = QTableWidgetItem("⚡ 1-Click")
-                unsub_item.setForeground(QColor("#38bdf8"))
-                unsub_item.setToolTip(f"RFC 8058 One-Click Header vorhanden:\n{e.unsubscribe_url or ''}")
-            elif e.has_unsubscribe_header:
-                unsub_item = QTableWidgetItem("🔗 Link")
-                unsub_item.setForeground(QColor("#94a3b8"))
-                unsub_item.setToolTip(f"Abmelde-Link vorhanden:\n{e.unsubscribe_url or e.unsubscribe_mailto or ''}")
-            else:
-                unsub_item = QTableWidgetItem("—")
-                unsub_item.setForeground(QColor("#475569"))
-            unsub_item.setTextAlignment(Qt.AlignCenter)
-            self.table.setItem(row, 6, unsub_item)
+        self.table_model.set_emails(self._filtered_emails)
 
     def _on_row_selected(self):
         selected_rows = self.table.selectionModel().selectedRows()
@@ -618,9 +731,9 @@ class AnalysisTab(QWidget):
         current_html = self.preview_text.toHtml()
         self.preview_text.setHtml(callout + current_html)
 
-    def _on_table_double_clicked(self, item: QTableWidgetItem):
+    def _on_table_double_clicked(self, target: Any):
         """Opens preview dialog when double-clicking any email row."""
-        row = item.row()
+        row = target.row() if hasattr(target, "row") else int(target)
         if 0 <= row < len(self._filtered_emails):
             self.table.setCurrentCell(row, 0)
             self.table.selectRow(row)

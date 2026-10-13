@@ -1,6 +1,6 @@
 [project]
 name = "py-inbox-helper"
-version = "1.2.1"
+version = "1.2.2"
 description = "A python GUI application to help manage a chaotic and neglected email inbox of a busy person."
 readme = "README.md"
 authors = [
@@ -9,9 +9,14 @@ authors = [
 requires-python = ">=3.14"
 dependencies = [
     "pyside6>=6.12.0",
-    "pytest>=9.1.1",
-    "pywin32>=312",
+    "pywin32>=312; sys_platform == 'win32'",
     "requests>=2.34.2",
+    "keyring>=24.3.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
 ]
 
 [project.scripts]

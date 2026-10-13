@@ -47,6 +47,8 @@ def decode_imap_utf7(s: str) -> str:
     return re.sub(r"&([A-Za-z0-9+,]*)-", _replace, s)
 
 
+from py_inbox_helper.security import delete_secret, get_secret, store_secret
+
 @dataclass
 class ImapConfig:
     """Connection credentials for an IMAP mailbox account."""
@@ -58,7 +60,7 @@ class ImapConfig:
     username: str = ""
     password: str = ""
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self, include_secrets: bool = False) -> Dict[str, Any]:
         return {
             "profile_id": self.profile_id,
             "account_name": self.account_name,
@@ -66,7 +68,7 @@ class ImapConfig:
             "port": self.port,
             "use_ssl": self.use_ssl,
             "username": self.username,
-            "password": self.password,
+            "password": self.password if include_secrets else "",
         }
 
     @classmethod
@@ -83,7 +85,7 @@ class ImapConfig:
 
 
 class ImapProfileManager:
-    """Stores and retrieves IMAP connection profiles in local JSON file."""
+    """Stores and retrieves IMAP connection profiles in local JSON file with keyring credentials."""
 
     def __init__(self, config_path: Optional[Path] = None):
         if config_path is None:
@@ -98,22 +100,39 @@ class ImapProfileManager:
         try:
             with open(self.config_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            return [ImapConfig.from_dict(item) for item in data]
+            profiles = [ImapConfig.from_dict(item) for item in data]
+            needs_resave = False
+            for p in profiles:
+                secret = get_secret(f"imap_{p.profile_id}")
+                if secret:
+                    p.password = secret
+                elif p.password:
+                    # Legacy plaintext password found in JSON: migrate to keyring and scrub
+                    store_secret(f"imap_{p.profile_id}", p.password)
+                    needs_resave = True
+
+            if needs_resave:
+                self._save_raw_profiles(profiles)
+            return profiles
         except Exception as ex:
             logger.warning("Could not load IMAP profiles: %s", ex)
             return []
 
-    def save_profile(self, profile: ImapConfig) -> None:
-        profiles = self.list_profiles()
-        profiles = [p for p in profiles if p.profile_id != profile.profile_id]
-        profiles.append(profile)
+    def _save_raw_profiles(self, profiles: List[ImapConfig]) -> None:
         with open(self.config_path, "w", encoding="utf-8") as f:
-            json.dump([p.to_dict() for p in profiles], f, indent=2)
+            json.dump([p.to_dict(include_secrets=False) for p in profiles], f, indent=2)
+
+    def save_profile(self, profile: ImapConfig) -> None:
+        if profile.password:
+            store_secret(f"imap_{profile.profile_id}", profile.password)
+        profiles = [p for p in self.list_profiles() if p.profile_id != profile.profile_id]
+        profiles.append(profile)
+        self._save_raw_profiles(profiles)
 
     def delete_profile(self, profile_id: str) -> None:
+        delete_secret(f"imap_{profile_id}")
         profiles = [p for p in self.list_profiles() if p.profile_id != profile_id]
-        with open(self.config_path, "w", encoding="utf-8") as f:
-            json.dump([p.to_dict() for p in profiles], f, indent=2)
+        self._save_raw_profiles(profiles)
 
 
 class ImapMailProvider(BaseMailProvider):

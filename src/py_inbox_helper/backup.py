@@ -45,10 +45,12 @@ class BackupManager:
         )
 
     def save_snapshot(self, snapshot: BackupSnapshot) -> Path:
-        """Persists the snapshot to a local JSON file."""
+        """Persists the snapshot to a local JSON file atomically."""
         file_path = self.backup_dir / f"{snapshot.snapshot_id}.json"
-        with open(file_path, "w", encoding="utf-8") as f:
+        tmp_path = self.backup_dir / f"{snapshot.snapshot_id}.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(snapshot.to_dict(), f, indent=2, ensure_ascii=False)
+        tmp_path.replace(file_path)
         return file_path
 
     def load_snapshot(self, snapshot_id: str) -> Optional[BackupSnapshot]:
