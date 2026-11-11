@@ -61,3 +61,24 @@ def test_protocol_generation_and_exports(tmp_path: Path):
     assert "Änderungsprotokoll" in content
     assert "Wochenangebote" in content
     assert "Rechnung 2026" in content
+
+
+def test_summary_ignores_disabled_actions():
+    generator = ProtocolGenerator()
+    results = [
+        ExecutionResult(
+            action=PlannedAction(email_id="item-1", email_subject="A", target_folder="04_Newsletter",
+                                 mark_as_read=True, unsubscribe=True, is_enabled=False),
+            success=True, is_dry_run=True,
+        ),
+        ExecutionResult(
+            action=PlannedAction(email_id="item-2", email_subject="B", target_folder="04_Newsletter"),
+            success=True, is_dry_run=True,
+        ),
+    ]
+    summary = generator.build_summary("test@domain.com", results, is_dry_run=True)
+    assert summary["total"] == 2
+    assert summary["skipped"] == 1
+    assert summary["moved"] == 1
+    assert summary["marked_read"] == 0
+    assert summary["unsubscribed"] == 0

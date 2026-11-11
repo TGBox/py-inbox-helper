@@ -69,6 +69,17 @@ class BaseMailProvider(ABC):
         target_folder: str,
         is_read: bool,
         categories: List[str],
-    ) -> None:
-        """Restores an item to its original folder and attributes during rollback."""
+        current_folder: Optional[str] = None,
+    ) -> Optional[str]:
+        """Restores an item to its original folder and attributes during rollback.
+
+        ``entry_id`` addresses the item where it lives right now. If the item was
+        moved during execution, ``current_folder`` is the folder it was moved to
+        and ``entry_id`` is its id in that folder. Returns the item's id after the
+        restore if it changed (otherwise None). Raises on failure.
+        """
         pass
+
+    def close(self) -> None:
+        """Releases cached connections. Called after an execution or restore run."""
+        return None

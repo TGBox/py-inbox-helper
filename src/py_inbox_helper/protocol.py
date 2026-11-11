@@ -21,11 +21,14 @@ class ProtocolGenerator:
         """Calculates key operational statistics from execution or dry-run results."""
         total = len(results)
         success_count = sum(1 for r in results if r.success)
-        moved = sum(1 for r in results if r.action.target_folder)
-        marked_read = sum(1 for r in results if r.action.mark_as_read)
-        marked_unread = sum(1 for r in results if r.action.mark_as_unread)
-        unsubscribed = sum(1 for r in results if r.action.unsubscribe)
-        flagged = sum(1 for r in results if r.action.set_flag or r.action.add_category)
+        # Actions the user disabled are skipped and must not be counted as changes.
+        active = [r for r in results if r.action.is_enabled]
+        skipped = total - len(active)
+        moved = sum(1 for r in active if r.action.target_folder)
+        marked_read = sum(1 for r in active if r.action.mark_as_read)
+        marked_unread = sum(1 for r in active if r.action.mark_as_unread)
+        unsubscribed = sum(1 for r in active if r.action.unsubscribe)
+        flagged = sum(1 for r in active if r.action.set_flag or r.action.add_category)
 
         return {
             "account_name": account_name,
@@ -35,6 +38,7 @@ class ProtocolGenerator:
             "total": total,
             "success_count": success_count,
             "failed_count": total - success_count,
+            "skipped": skipped,
             "moved": moved,
             "marked_read": marked_read,
             "marked_unread": marked_unread,

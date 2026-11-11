@@ -63,6 +63,8 @@ class EmailItem:
     headers: Dict[str, str] = field(default_factory=dict)
     assigned_category: EmailCategory = EmailCategory.UNCLASSIFIED
     classification_reason: str = ""
+    # True for VIP / whitelist senders: the planner never plans changes for these.
+    is_protected: bool = False
 
     @property
     def display_body(self) -> str:
@@ -143,6 +145,7 @@ class EmailItem:
             "headers": self.headers,
             "assigned_category": self.assigned_category.value,
             "classification_reason": self.classification_reason,
+            "is_protected": self.is_protected,
         }
 
     @classmethod
@@ -185,6 +188,7 @@ class EmailItem:
             headers=dict(data.get("headers", {})),
             assigned_category=assigned_category,
             classification_reason=data.get("classification_reason", ""),
+            is_protected=bool(data.get("is_protected", False)),
         )
 
 
@@ -316,6 +320,10 @@ class BackupItemState:
     importance: str
     categories: List[str]
     subject: str
+    # Where the item lives after execution (None = not moved). Moving an item can
+    # change its provider id (Outlook EntryID, IMAP UID), so rollback needs both.
+    current_entry_id: Optional[str] = None
+    current_folder: Optional[str] = None
 
 
 @dataclass
@@ -341,6 +349,8 @@ class BackupSnapshot:
                     "importance": item.importance,
                     "categories": item.categories,
                     "subject": item.subject,
+                    "current_entry_id": item.current_entry_id,
+                    "current_folder": item.current_folder,
                 }
                 for item in self.items
             ],
@@ -362,6 +372,8 @@ class BackupSnapshot:
                     importance=i["importance"],
                     categories=i.get("categories", []),
                     subject=i.get("subject", ""),
+                    current_entry_id=i.get("current_entry_id"),
+                    current_folder=i.get("current_folder"),
                 )
                 for i in data.get("items", [])
             ],
@@ -376,3 +388,7 @@ class ExecutionResult:
     is_dry_run: bool = False
     message: str = ""
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    # Set by providers when the item was moved: its new folder and its new
+    # provider id there (None if the provider could not determine the new id).
+    new_entry_id: Optional[str] = None
+    new_folder: Optional[str] = None
