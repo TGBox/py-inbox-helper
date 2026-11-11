@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 
 # MAPI Property Tag for Transport Message Headers (Internet Headers)
 PR_TRANSPORT_MESSAGE_HEADERS = "http://schemas.microsoft.com/mapi/proptag/0x007D001E"
+# MAPI Property Tag for the sender's SMTP address (PidTagSenderSmtpAddress)
+PR_SENDER_SMTP_ADDRESS = "http://schemas.microsoft.com/mapi/proptag/0x5D01001F"
 
 # Outlook Default Folder Enumerations
 OL_FOLDER_INBOX = 6
@@ -26,6 +28,8 @@ class OutlookComProvider(BaseMailProvider):
     def __init__(self):
         self._app = None
         self._namespace = None
+        # Cache: Exchange X.500 address -> SMTP address
+        self._smtp_cache: Dict[str, str] = {}
 
     def _ensure_connected(self):
         """Initializes COM and connects to Outlook application."""
@@ -206,7 +210,7 @@ class OutlookComProvider(BaseMailProvider):
                         account_name=account_id,
                         subject=item.Subject or "(Kein Betreff)",
                         sender_name=getattr(item, "SenderName", "") or "",
-                        sender_email=getattr(item, "SenderEmailAddress", "") or "",
+                        sender_email=self._resolve_sender_email(item),
                         received_time=recv_time,
                         body_preview=(body_raw[:300] if body_raw else ""),
                         body_text=body_raw,
@@ -227,6 +231,42 @@ class OutlookComProvider(BaseMailProvider):
                     logger.debug("Skipping item %d due to error: %s", idx, ex)
 
         return emails
+
+    def _resolve_sender_email(self, mail_item: Any) -> str:
+        """Returns the sender's SMTP address.
+
+        For senders inside the own Exchange organisation Outlook reports an X.500
+        address ("/O=EXCHANGELABS/..."), which never matches whitelist entries
+        such as "@firma.de". Resolve those to the real SMTP address.
+        """
+        address = getattr(mail_item, "SenderEmailAddress", "") or ""
+        try:
+            is_exchange = (getattr(mail_item, "SenderEmailType", "") or "").upper() == "EX"
+        except Exception:
+            is_exchange = False
+        if not is_exchange and "@" in address:
+            return address
+
+        cache_key = address.lower()
+        if cache_key and cache_key in self._smtp_cache:
+            return self._smtp_cache[cache_key]
+
+        smtp = ""
+        try:
+            smtp = mail_item.PropertyAccessor.GetProperty(PR_SENDER_SMTP_ADDRESS) or ""
+        except Exception:
+            smtp = ""
+        if "@" not in smtp:
+            try:
+                exchange_user = mail_item.Sender.GetExchangeUser()
+                smtp = (exchange_user.PrimarySmtpAddress if exchange_user else "") or ""
+            except Exception:
+                smtp = ""
+
+        result = smtp if "@" in smtp else address
+        if cache_key:
+            self._smtp_cache[cache_key] = result
+        return result
 
     def _extract_headers(self, mail_item: Any) -> Dict[str, str]:
         """Extracts Internet transport headers using MAPI PropertyAccessor."""
@@ -315,6 +355,8 @@ class OutlookComProvider(BaseMailProvider):
             )
 
         executed_changes = []
+        new_entry_id: Optional[str] = None
+        new_folder: Optional[str] = None
         try:
             # 1. Target Folder Move
             if action.target_folder:
@@ -322,11 +364,16 @@ class OutlookComProvider(BaseMailProvider):
                     deleted_folder = self._namespace.GetDefaultFolder(OL_FOLDER_DELETED_ITEMS)
                     item = item.Move(deleted_folder)
                     executed_changes.append("In Gelöschte Elemente verschoben")
+                    # Moving usually assigns a new EntryID; remember it for rollback.
+                    new_entry_id = item.EntryID
+                    new_folder = action.target_folder
                 else:
                     dest = self._get_or_create_folder(account_id, action.target_folder)
                     if dest:
                         item = item.Move(dest)
                         executed_changes.append(f"Verschoben nach '{action.target_folder}'")
+                        new_entry_id = item.EntryID
+                        new_folder = action.target_folder
                     else:
                         return ExecutionResult(action=action, success=False, message=f"Zielordner '{action.target_folder}' konnte nicht erstellt werden")
 
@@ -354,12 +401,18 @@ class OutlookComProvider(BaseMailProvider):
                 success=True,
                 is_dry_run=False,
                 message=", ".join(executed_changes) if executed_changes else "Keine Änderungen nötig",
+                new_entry_id=new_entry_id,
+                new_folder=new_folder,
             )
         except Exception as ex:
+            # If the move already happened, still report the new location so the
+            # backup snapshot can find the item again.
             return ExecutionResult(
                 action=action,
                 success=False,
                 message=f"Fehler bei Ausführung in Outlook: {str(ex)}",
+                new_entry_id=new_entry_id,
+                new_folder=new_folder,
             )
 
     def restore_item(
@@ -369,9 +422,16 @@ class OutlookComProvider(BaseMailProvider):
         target_folder: str,
         is_read: bool,
         categories: List[str],
-    ) -> None:
-        """Restores an item back to its original folder and properties during rollback."""
+        current_folder: Optional[str] = None,
+    ) -> Optional[str]:
+        """Restores an item back to its original folder and properties during rollback.
+
+        ``entry_id`` must be the item's current EntryID (it changes when an item is
+        moved). Returns the EntryID the item has after being moved back.
+        """
         self._ensure_connected()
+        if not entry_id:
+            raise LookupError("Aktuelle EntryID der E-Mail ist unbekannt")
         item = self._namespace.GetItemFromID(entry_id, store_id)
         dest_folder = self._get_or_create_folder(store_id, target_folder)
         if dest_folder:
@@ -379,3 +439,7 @@ class OutlookComProvider(BaseMailProvider):
         item.UnRead = not is_read
         item.Categories = ", ".join(categories)
         item.Save()
+        try:
+            return item.EntryID
+        except Exception:
+            return None

@@ -64,3 +64,18 @@ def test_planner_dry_run_simulation():
     assert results[0].is_dry_run is True
     assert results[0].success is True
     assert "Simuliert:" in results[0].message
+
+
+def test_planner_never_touches_protected_senders():
+    planner = ActionPlanner()
+    email = make_categorized_email(EmailCategory.IMPORTANT_ACTION, has_unsub=True)
+    email.is_protected = True
+
+    plan = planner.create_plan("user@test.de", [email])
+    action = plan.actions[0]
+    assert action.action_type == ActionType.NONE
+    assert action.target_folder is None
+    assert action.mark_as_read is False
+    assert action.set_flag is None and action.add_category is None
+    assert action.unsubscribe is False
+    assert "Keine Änderung" in planner.simulate_dry_run(plan)[0].message

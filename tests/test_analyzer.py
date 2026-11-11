@@ -137,3 +137,77 @@ def test_classify_offset_naive_datetime_does_not_fail():
     assert "Alter" in reason or "Tage" in reason
 
 
+def test_advertising_with_urgent_words_is_not_important():
+    """Regression: ads using 'Wichtig' / 'Erinnerung' landed in Wichtig / Wiedervorlage."""
+    analyzer = EmailAnalyzer()
+    unsub = {"List-Unsubscribe": "<https://shop.example.com/unsub>"}
+
+    cat, _ = analyzer.classify(make_email(
+        "WICHTIG: Nur heute 50% Rabatt auf alles", sender_email="news@shop.de", headers=unsub))
+    assert cat == EmailCategory.NEWSLETTER
+
+    cat, _ = analyzer.classify(make_email(
+        "Letzte Erinnerung: Ihr Gutschein läuft ab", sender_email="marketing@shop.de"))
+    assert cat == EmailCategory.NEWSLETTER
+
+    # High priority set by a bulk sender does not make it important either
+    cat, _ = analyzer.classify(make_email("Nur für kurze Zeit", headers=unsub, importance="high"))
+    assert cat == EmailCategory.NEWSLETTER
+
+    # An invoice sent through a mailing platform is still an invoice
+    cat, _ = analyzer.classify(make_email("Ihre Rechnung für Mai", headers=unsub))
+    assert cat == EmailCategory.INVOICE_FINANCE
+
+
+@pytest.mark.parametrize("subject", [
+    "Wholesale prices update",             # contains "sale"
+    "Unbefristeter Vertrag - Unterlagen",  # contains "frist"
+    "Belegschaftsversammlung am Freitag",  # contains "beleg"
+    "Eher unwichtig",                      # contains "wichtig"
+])
+def test_keywords_do_not_match_inside_other_words(subject):
+    analyzer = EmailAnalyzer()
+    cat, reason = analyzer.classify(make_email(subject, sender_email="kollege@partner.com"))
+    assert cat == EmailCategory.UNCLASSIFIED, reason
+
+
+@pytest.mark.parametrize("subject, expected", [
+    ("Abgabefrist endet morgen", EmailCategory.IMPORTANT_ACTION),
+    ("Wichtige Unterlagen", EmailCategory.IMPORTANT_ACTION),
+    ("Zahlungserinnerung", EmailCategory.RESUBMISSION),
+    ("Telefonrechnung Mai", EmailCategory.INVOICE_FINANCE),
+    ("Ihre Rechnungen 2025", EmailCategory.INVOICE_FINANCE),
+    ("Zahlungsbeleg", EmailCategory.INVOICE_FINANCE),
+    ("Summer Sale startet", EmailCategory.NEWSLETTER),
+])
+def test_keywords_still_match_compound_words(subject, expected):
+    analyzer = EmailAnalyzer()
+    cat, reason = analyzer.classify(make_email(subject, sender_email="kollege@partner.com"))
+    assert cat == expected, reason
+
+
+def test_whitelist_marks_emails_as_protected():
+    analyzer = EmailAnalyzer(RuleConfig(whitelist_senders=["chef@unternehmen.de", "@familie.de", "kunde.de"]))
+    emails = [
+        make_email("A", sender_email="chef@unternehmen.de"),
+        make_email("B", sender_email="Mama@Familie.de"),
+        make_email("C", sender_email="info@mail.kunde.de"),
+        make_email("D", sender_email="nicht-chef@unternehmen.de"),
+        make_email("E", sender_email="spam@notfamilie.de.example.com"),
+    ]
+    analyzer.analyze_batch(emails)
+    assert [e.is_protected for e in emails] == [True, True, True, False, False]
+
+    # Removing the entry lifts the protection on the next analysis
+    analyzer.config.whitelist_senders = []
+    analyzer.analyze_batch(emails)
+    assert not any(e.is_protected for e in emails)
+
+
+def test_whitelist_is_persisted(tmp_path):
+    from py_inbox_helper.analyzer import load_whitelist, save_whitelist
+
+    path = tmp_path / "whitelist.json"
+    assert load_whitelist(path) == []
+    save_whitelist(["chef@unternehmen.de", " @familie.de ", ""], path)
+    assert load_whitelist(path) == ["chef@unternehmen.de", "@familie.de"]

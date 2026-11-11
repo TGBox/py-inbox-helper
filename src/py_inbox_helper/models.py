@@ -63,6 +63,8 @@ class EmailItem:
     headers: Dict[str, str] = field(default_factory=dict)
     assigned_category: EmailCategory = EmailCategory.UNCLASSIFIED
     classification_reason: str = ""
+    # True for VIP / whitelist senders: the planner never plans changes for these.
+    is_protected: bool = False
 
     @property
     def display_body(self) -> str:
@@ -123,10 +125,28 @@ class EmailItem:
         return None
 
     def to_dict(self) -> Dict[str, Any]:
-        d = asdict(self)
-        d["received_time"] = self.received_time.isoformat()
-        d["assigned_category"] = self.assigned_category.value
-        return d
+        return {
+            "id": self.id,
+            "entry_id": self.entry_id,
+            "store_id": self.store_id,
+            "account_name": self.account_name,
+            "subject": self.subject,
+            "sender_name": self.sender_name,
+            "sender_email": self.sender_email,
+            "received_time": self.received_time.isoformat(),
+            "body_preview": self.body_preview,
+            "body_text": self.body_text,
+            "body_html": self.body_html,
+            "is_read": self.is_read,
+            "importance": self.importance,
+            "categories": self.categories,
+            "folder_path": self.folder_path,
+            "size_bytes": self.size_bytes,
+            "headers": self.headers,
+            "assigned_category": self.assigned_category.value,
+            "classification_reason": self.classification_reason,
+            "is_protected": self.is_protected,
+        }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> EmailItem:
@@ -168,6 +188,7 @@ class EmailItem:
             headers=dict(data.get("headers", {})),
             assigned_category=assigned_category,
             classification_reason=data.get("classification_reason", ""),
+            is_protected=bool(data.get("is_protected", False)),
         )
 
 
@@ -283,6 +304,10 @@ class BackupItemState:
     importance: str
     categories: List[str]
     subject: str
+    # Where the item lives after execution (None = not moved). Moving an item can
+    # change its provider id (Outlook EntryID, IMAP UID), so rollback needs both.
+    current_entry_id: Optional[str] = None
+    current_folder: Optional[str] = None
 
 
 @dataclass
@@ -294,9 +319,26 @@ class BackupSnapshot:
     items: List[BackupItemState] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
-        d = asdict(self)
-        d["created_at"] = self.created_at.isoformat()
-        return d
+        return {
+            "snapshot_id": self.snapshot_id,
+            "created_at": self.created_at.isoformat(),
+            "account_name": self.account_name,
+            "items": [
+                {
+                    "id": item.id,
+                    "entry_id": item.entry_id,
+                    "store_id": item.store_id,
+                    "folder_path": item.folder_path,
+                    "is_read": item.is_read,
+                    "importance": item.importance,
+                    "categories": item.categories,
+                    "subject": item.subject,
+                    "current_entry_id": item.current_entry_id,
+                    "current_folder": item.current_folder,
+                }
+                for item in self.items
+            ],
+        }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> BackupSnapshot:
@@ -314,6 +356,8 @@ class BackupSnapshot:
                     importance=i["importance"],
                     categories=i.get("categories", []),
                     subject=i.get("subject", ""),
+                    current_entry_id=i.get("current_entry_id"),
+                    current_folder=i.get("current_folder"),
                 )
                 for i in data.get("items", [])
             ],
@@ -328,3 +372,7 @@ class ExecutionResult:
     is_dry_run: bool = False
     message: str = ""
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    # Set by providers when the item was moved: its new folder and its new
+    # provider id there (None if the provider could not determine the new id).
+    new_entry_id: Optional[str] = None
+    new_folder: Optional[str] = None

@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from py_inbox_helper.ai import AiClient, AiConfig
-from py_inbox_helper.analyzer import EmailAnalyzer
+from py_inbox_helper.analyzer import EmailAnalyzer, save_whitelist
 from py_inbox_helper.provider.imap_provider import ImapConfig, ImapProfileManager
 
 
@@ -136,7 +136,8 @@ class SettingsDialog(QDialog):
         wl_layout = QVBoxLayout(wl_tab)
         wl_layout.addWidget(QLabel(
             "Trage hier E-Mail-Adressen oder Domains ein, die niemals automatisch gelöscht, "
-            "verschoben oder archiviert werden dürfen (eine Adresse/Domain pro Zeile, z.B. '@firma.de' oder 'chef@mail.de'):"
+            "verschoben oder archiviert werden dürfen (eine pro Zeile): 'chef@mail.de' für eine "
+            "einzelne Adresse, '@firma.de' oder 'firma.de' für eine ganze Domain."
         ))
 
         self.whitelist_edit = QTextEdit()
@@ -231,5 +232,6 @@ class SettingsDialog(QDialog):
         # 2. Whitelist
         lines = [line.strip() for line in self.whitelist_edit.toPlainText().splitlines() if line.strip()]
         self.analyzer.config.whitelist_senders = lines
+        save_whitelist(lines)
 
         self.accept()

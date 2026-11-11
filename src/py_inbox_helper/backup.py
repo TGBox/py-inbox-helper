@@ -83,28 +83,51 @@ class BackupManager:
 
     def restore_snapshot(self, snapshot: BackupSnapshot, provider: Any) -> List[Dict[str, Any]]:
         """Restores all items in the snapshot back to their original state using the provider."""
-        return self._restore_item_list(snapshot.items, provider)
+        results = self._restore_item_list(snapshot.items, provider)
+        self._persist_after_restore(snapshot)
+        return results
 
     def restore_items_by_id(self, snapshot: BackupSnapshot, item_ids: List[str], provider: Any) -> List[Dict[str, Any]]:
         """Restores only selected items matching given id or entry_id list."""
         id_set = set(item_ids)
         target_items = [i for i in snapshot.items if i.id in id_set or i.entry_id in id_set]
-        return self._restore_item_list(target_items, provider)
+        results = self._restore_item_list(target_items, provider)
+        self._persist_after_restore(snapshot)
+        return results
+
+    def _persist_after_restore(self, snapshot: BackupSnapshot) -> None:
+        """Saves the snapshot so restored items are not treated as 'still moved' next time."""
+        try:
+            self.save_snapshot(snapshot)
+        except Exception:
+            pass
 
     def _restore_item_list(self, items: List[BackupItemState], provider: Any) -> List[Dict[str, Any]]:
         results = []
         for item in items:
+            original_entry_id = item.entry_id
             try:
-                provider.restore_item(
-                    entry_id=item.entry_id,
-                    store_id=item.store_id,
-                    target_folder=item.folder_path,
-                    is_read=item.is_read,
-                    categories=item.categories,
-                )
+                kwargs: Dict[str, Any] = {
+                    "entry_id": item.entry_id,
+                    "store_id": item.store_id,
+                    "target_folder": item.folder_path,
+                    "is_read": item.is_read,
+                    "categories": item.categories,
+                }
+                if item.current_folder:
+                    # The item was moved during execution: address it where it lives now.
+                    kwargs["entry_id"] = item.current_entry_id
+                    kwargs["current_folder"] = item.current_folder
+                new_entry_id = provider.restore_item(**kwargs)
+
+                # Moving back may assign a new provider id again.
+                if isinstance(new_entry_id, str) and new_entry_id:
+                    item.entry_id = new_entry_id
+                item.current_entry_id = None
+                item.current_folder = None
                 results.append({
                     "id": item.id,
-                    "entry_id": item.entry_id,
+                    "entry_id": original_entry_id,
                     "subject": item.subject,
                     "success": True,
                     "message": f"Wiederhergestellt in '{item.folder_path}' (Gelesen: {item.is_read})",
@@ -112,7 +135,7 @@ class BackupManager:
             except Exception as ex:
                 results.append({
                     "id": item.id,
-                    "entry_id": item.entry_id,
+                    "entry_id": original_entry_id,
                     "subject": item.subject,
                     "success": False,
                     "message": f"Fehler bei Wiederherstellung: {str(ex)}",

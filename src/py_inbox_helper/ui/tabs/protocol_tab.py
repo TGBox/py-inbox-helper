@@ -132,18 +132,14 @@ class ProtocolTab(QWidget):
         self._current_plan = plan
         self._dry_run_results = results
 
-        summary = self.generator.build_summary(plan.account_name, results, is_dry_run=True)
-        self.summary_label.setText(
-            f"Geplant: {summary['total']} Aktionen | {summary['moved']} Verschiebungen | "
-            f"{summary['marked_read']} als gelesen | {summary['unsubscribed']} Abmeldungen"
-        )
+        self._update_summary_label()
 
         self.table.setRowCount(len(results))
         for row, r in enumerate(results):
             # 0: Checkbox
             check = QCheckBox()
             check.setChecked(r.action.is_enabled)
-            check.stateChanged.connect(lambda state, a=r.action: setattr(a, "is_enabled", bool(state)))
+            check.stateChanged.connect(lambda state, a=r.action: self._on_action_toggled(a, bool(state)))
             self.table.setCellWidget(row, 0, check)
 
             # 1: Subject
@@ -161,6 +157,22 @@ class ProtocolTab(QWidget):
 
             # 5: Message
             self.table.setItem(row, 5, QTableWidgetItem(r.message))
+
+    def _on_action_toggled(self, action, enabled: bool):
+        action.is_enabled = enabled
+        self._update_summary_label()
+
+    def _update_summary_label(self):
+        """Shows the totals of the currently enabled actions."""
+        if not self._current_plan:
+            return
+        summary = self.generator.build_summary(self._current_plan.account_name, self._dry_run_results, is_dry_run=True)
+        skipped = summary["skipped"]
+        skipped_text = f" | {skipped} deaktiviert" if skipped else ""
+        self.summary_label.setText(
+            f"Geplant: {summary['total'] - skipped} Aktionen | {summary['moved']} Verschiebungen | "
+            f"{summary['marked_read']} als gelesen | {summary['unsubscribed']} Abmeldungen{skipped_text}"
+        )
 
     def _confirm_and_apply(self):
         if not self._current_plan or not self._dry_run_results:

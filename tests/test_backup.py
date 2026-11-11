@@ -132,3 +132,69 @@ def test_granular_single_item_rollback(tmp_path: Path):
         categories=[],
     )
 
+
+def test_rollback_uses_new_location_of_moved_items(tmp_path: Path):
+    """Moving changes the provider id (Outlook EntryID / IMAP UID); rollback must use the new one."""
+    manager = BackupManager(backup_dir=tmp_path)
+    mock_provider = MagicMock()
+    mock_provider.restore_item.return_value = "ENTRY-1-RESTORED"
+
+    snapshot = manager.create_snapshot("test@domain.com", [
+        EmailItem(
+            id="item-1",
+            entry_id="ENTRY-1",
+            store_id="STORE-1",
+            account_name="test@domain.com",
+            subject="Test Mail",
+            sender_name="Sender",
+            sender_email="sender@mail.com",
+            received_time=datetime.now(timezone.utc),
+            folder_path="Posteingang",
+        )
+    ])
+    # What the execution worker records after the move
+    snapshot.items[0].current_entry_id = "ENTRY-1-MOVED"
+    snapshot.items[0].current_folder = "04_Newsletter"
+    manager.save_snapshot(snapshot)
+
+    loaded = manager.load_snapshot(snapshot.snapshot_id)
+    assert loaded.items[0].current_entry_id == "ENTRY-1-MOVED"
+    assert loaded.items[0].current_folder == "04_Newsletter"
+
+    results = manager.restore_snapshot(loaded, mock_provider)
+    assert results[0]["success"] is True
+    mock_provider.restore_item.assert_called_once_with(
+        entry_id="ENTRY-1-MOVED",
+        store_id="STORE-1",
+        target_folder="Posteingang",
+        is_read=False,
+        categories=[],
+        current_folder="04_Newsletter",
+    )
+
+    # After the restore the snapshot on disk describes the item's position again
+    reloaded = manager.load_snapshot(snapshot.snapshot_id)
+    assert reloaded.items[0].entry_id == "ENTRY-1-RESTORED"
+    assert reloaded.items[0].current_entry_id is None
+    assert reloaded.items[0].current_folder is None
+
+
+def test_rollback_reports_failures(tmp_path: Path):
+    manager = BackupManager(backup_dir=tmp_path)
+    mock_provider = MagicMock()
+    mock_provider.restore_item.side_effect = RuntimeError("nicht gefunden")
+
+    snapshot = manager.create_snapshot("test@domain.com", [
+        EmailItem(
+            id="item-1", entry_id="ENTRY-1", store_id="STORE-1", account_name="test@domain.com",
+            subject="Test Mail", sender_name="Sender", sender_email="sender@mail.com",
+            received_time=datetime.now(timezone.utc), folder_path="Posteingang",
+        )
+    ])
+    snapshot.items[0].current_entry_id = "ENTRY-1-MOVED"
+    snapshot.items[0].current_folder = "04_Newsletter"
+
+    results = manager.restore_snapshot(snapshot, mock_provider)
+    assert results[0]["success"] is False
+    # Still recorded as moved, so a later retry addresses the right item
+    assert snapshot.items[0].current_folder == "04_Newsletter"

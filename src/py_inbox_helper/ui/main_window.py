@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 
 from py_inbox_helper.ai import AiClient, AiConfig
 from py_inbox_helper.analysis_storage import AnalysisStorageManager
-from py_inbox_helper.analyzer import EmailAnalyzer
+from py_inbox_helper.analyzer import EmailAnalyzer, RuleConfig, load_whitelist, save_whitelist
 from py_inbox_helper.backup import BackupManager
 from py_inbox_helper.models import ActionPlan, AnalysisSession, EmailItem, ExecutionResult
 from py_inbox_helper.planner import ActionPlanner, PlannerPresetConfig
@@ -76,7 +76,7 @@ class MainWindow(QMainWindow):
 
         self.backup_manager = BackupManager()
         self.analysis_storage = AnalysisStorageManager()
-        self.analyzer = EmailAnalyzer()
+        self.analyzer = EmailAnalyzer(RuleConfig(whitelist_senders=load_whitelist()))
         self.ai_config = AiConfig.load_from_path()
         self.ai_client = AiClient(self.ai_config)
         self._ai_worker: Optional[AiStatusWorker] = None
@@ -415,11 +415,13 @@ class MainWindow(QMainWindow):
     def _add_to_whitelist(self, sender: str):
         if sender not in self.analyzer.config.whitelist_senders:
             self.analyzer.config.whitelist_senders.append(sender)
+            save_whitelist(self.analyzer.config.whitelist_senders)
             if self.isVisible():
                 QMessageBox.information(
                     self,
                     "VIP-Whitelist aktualisiert",
-                    f"Absender '{sender}' wurde zur Whitelist hinzugefügt und ist nun vor Verschiebung/Löschung geschützt.",
+                    f"Absender '{sender}' wurde zur Whitelist hinzugefügt. Seine E-Mails werden "
+                    "nicht mehr verschoben, gelöscht oder als gelesen markiert.",
                 )
             if self.current_emails:
                 self.analyzer.analyze_batch(self.current_emails)
@@ -546,7 +548,15 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Hinweis", "Bitte führe zuerst einen Scan durch.")
             return
 
+        # Keep the user's per-mail deselections when the plan is rebuilt.
+        previously_disabled = set()
+        if self.current_plan:
+            previously_disabled = {a.email_id for a in self.current_plan.actions if not a.is_enabled}
+
         self.current_plan = self.planner.create_plan(self.current_account_id, self.current_emails)
+        for action in self.current_plan.actions:
+            if action.email_id in previously_disabled:
+                action.is_enabled = False
         dry_run_results = self.planner.simulate_dry_run(self.current_plan)
 
         self.protocol_tab.set_simulation_results(self.current_plan, dry_run_results)
@@ -576,13 +586,34 @@ class MainWindow(QMainWindow):
         self._exec_worker.start()
 
     def _on_execution_finished(self, results: List[ExecutionResult], snapshot_id: str):
-        self.backup_tab.append_log("--- Ausführung abgeschlossen! ---")
+        failed = [r for r in results if not r.success]
+        planned = self.current_plan.enabled_count if self.current_plan else len(results)
+        not_run = max(planned - len(results), 0)  # > 0 if the run was cancelled
         self.backup_tab.reload_snapshots()
-        QMessageBox.information(
+
+        if not failed and not not_run:
+            self.backup_tab.append_log("--- Ausführung abgeschlossen! ---")
+            QMessageBox.information(
+                self,
+                "Erfolgreich ausgeführt",
+                f"Alle {len(results)} Aktionen wurden erfolgreich ausgeführt.\n"
+                f"Wiederherstellungspunkt '{snapshot_id}' wurde gesichert.",
+            )
+            return
+
+        self.backup_tab.append_log(
+            f"--- Ausführung beendet: {len(results) - len(failed)} erfolgreich, "
+            f"{len(failed)} fehlgeschlagen, {not_run} nicht ausgeführt ---"
+        )
+        examples = "\n".join(f"• {r.action.email_subject[:50]}: {r.message}" for r in failed[:5])
+        more = f"\n… und {len(failed) - 5} weitere (siehe Live-Protokoll)." if len(failed) > 5 else ""
+        details = f"\n\nFehlgeschlagen:\n{examples}{more}" if failed else ""
+        QMessageBox.warning(
             self,
-            "Erfolgreich ausgeführt",
-            f"Alle {len(results)} Aktionen wurden erfolgreich ausgeführt.\n"
-            f"Wiederherstellungspunkt '{snapshot_id}' wurde gesichert.",
+            "Ausführung mit Problemen beendet",
+            f"{len(results) - len(failed)} Aktionen erfolgreich, {len(failed)} fehlgeschlagen, "
+            f"{not_run} nicht ausgeführt.\n"
+            f"Wiederherstellungspunkt '{snapshot_id}' wurde gesichert.{details}",
         )
 
     def _on_execution_failed(self, error_msg: str):
@@ -625,13 +656,30 @@ class MainWindow(QMainWindow):
         self._start_restore_items(latest_id, [email_id])
 
     def _on_restore_finished(self, results: List[dict]):
-        self.backup_tab.append_log("--- Rollback erfolgreich abgeschlossen! ---")
+        failed = [r for r in results if not r.get("success")]
         for r in results:
             self.backup_tab.append_log(f"{r['subject'][:30]}: {r['message']}")
-        QMessageBox.information(
+        self.backup_tab.reload_snapshots()
+
+        if not failed:
+            self.backup_tab.append_log("--- Rollback erfolgreich abgeschlossen! ---")
+            QMessageBox.information(
+                self,
+                "Rollback abgeschlossen",
+                f"{len(results)} Elemente wurden erfolgreich wiederhergestellt.",
+            )
+            return
+
+        self.backup_tab.append_log(
+            f"--- Rollback beendet: {len(results) - len(failed)} wiederhergestellt, {len(failed)} fehlgeschlagen ---"
+        )
+        examples = "\n".join(f"• {r['subject'][:50]}: {r['message']}" for r in failed[:5])
+        more = f"\n… und {len(failed) - 5} weitere (siehe Live-Protokoll)." if len(failed) > 5 else ""
+        QMessageBox.warning(
             self,
-            "Rollback abgeschlossen",
-            f"{len(results)} Elemente wurden erfolgreich wiederhergestellt.",
+            "Rollback unvollständig",
+            f"{len(results) - len(failed)} Elemente wiederhergestellt, {len(failed)} fehlgeschlagen.\n\n"
+            f"Fehlgeschlagen:\n{examples}{more}",
         )
 
     def _on_restore_failed(self, error_msg: str):

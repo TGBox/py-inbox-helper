@@ -85,6 +85,18 @@ class ActionPlanner:
 
         for email in emails:
             cat = email.assigned_category
+
+            # VIP / whitelist senders are protected: never move, mark or unsubscribe.
+            if getattr(email, "is_protected", False):
+                plan.actions.append(PlannedAction(
+                    email_id=email.id,
+                    email_subject=email.subject,
+                    action_type=ActionType.NONE,
+                    explanation=f"Geschützter VIP-/Whitelist-Absender – keine Änderung ({email.classification_reason})",
+                    is_enabled=True,
+                ))
+                continue
+
             rule = self.config.category_rules.get(cat, self.config.category_rules[EmailCategory.UNCLASSIFIED])
 
             target_folder = rule.target_folder

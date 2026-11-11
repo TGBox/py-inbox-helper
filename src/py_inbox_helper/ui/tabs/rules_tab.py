@@ -1,6 +1,7 @@
 """Rules and Action Configuration Tab with smart folder presets."""
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Dict, List, Optional
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
@@ -136,7 +137,10 @@ class RulesTab(QWidget):
             unsub_widget: QCheckBox = self.table.cellWidget(row, 4)
 
             folder_val = folder_widget.text().strip() or None
-            self.config.category_rules[cat] = CategoryRulePreset(
+            # Keep the settings this table has no column for (flag, category, mark unread).
+            existing = self.config.category_rules.get(cat, CategoryRulePreset(target_folder=None))
+            self.config.category_rules[cat] = replace(
+                existing,
                 target_folder=folder_val,
                 mark_as_read=read_widget.isChecked(),
                 use_year_subfolder=year_widget.isChecked(),
@@ -146,5 +150,6 @@ class RulesTab(QWidget):
         self.generate_plan_requested.emit()
 
     def _reset_defaults(self):
-        self.config = PlannerPresetConfig()
+        # Reset in place: the planner holds a reference to this very config object.
+        self.config.category_rules = PlannerPresetConfig().category_rules
         self._populate_table()

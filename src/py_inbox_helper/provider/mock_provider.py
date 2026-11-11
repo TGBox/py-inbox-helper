@@ -368,6 +368,7 @@ class MockMailProvider(BaseMailProvider):
         if not item:
             return ExecutionResult(action=action, success=False, message="E-Mail nicht gefunden")
 
+        moved = bool(action.target_folder) and item.folder_path != action.target_folder
         if action.target_folder:
             item.folder_path = action.target_folder
         if action.mark_as_read:
@@ -382,6 +383,8 @@ class MockMailProvider(BaseMailProvider):
             success=True,
             is_dry_run=False,
             message="Erfolgreich ausgeführt in Mock-Postfach",
+            new_entry_id=item.entry_id if moved else None,
+            new_folder=action.target_folder if moved else None,
         )
 
     def restore_item(
@@ -391,9 +394,12 @@ class MockMailProvider(BaseMailProvider):
         target_folder: str,
         is_read: bool,
         categories: List[str],
-    ) -> None:
+        current_folder: Optional[str] = None,
+    ) -> Optional[str]:
         item = self.items.get(entry_id)
-        if item:
-            item.folder_path = target_folder
-            item.is_read = is_read
-            item.categories = list(categories)
+        if item is None:
+            raise LookupError(f"E-Mail '{entry_id}' im Mock-Postfach nicht gefunden")
+        item.folder_path = target_folder
+        item.is_read = is_read
+        item.categories = list(categories)
+        return None
