@@ -11,7 +11,7 @@ from py_inbox_helper.provider.imap_provider import (
     decode_imap_utf7,
     encode_imap_utf7,
 )
-from fake_imap_server import FakeImapServer
+from tests.fake_imap_server import FakeImapServer
 
 
 def make_headers(subject: str, message_id: str, sender: str = "Max Mustermann <max@example.com>") -> bytes:
