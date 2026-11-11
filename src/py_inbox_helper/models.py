@@ -1,7 +1,7 @@
 """Domain models for email analysis, action planning, and snapshots."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
@@ -207,14 +207,10 @@ class AnalysisSession:
             self.created_at = ensure_utc(self.created_at)
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
-            "session_id": self.session_id,
-            "created_at": self.created_at.isoformat() if self.created_at else datetime.now(timezone.utc).isoformat(),
-            "account_id": self.account_id,
-            "account_name": self.account_name,
-            "notes": self.notes,
-            "emails": [e.to_dict() for e in self.emails],
-        }
+        d = asdict(self)
+        d["created_at"] = self.created_at.isoformat() if self.created_at else datetime.now(timezone.utc).isoformat()
+        d["emails"] = [e.to_dict() for e in self.emails]
+        return d
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> AnalysisSession:
@@ -258,21 +254,9 @@ class PlannedAction:
     is_enabled: bool = True
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
-            "email_id": self.email_id,
-            "email_subject": self.email_subject,
-            "action_type": self.action_type.value,
-            "target_folder": self.target_folder,
-            "mark_as_read": self.mark_as_read,
-            "mark_as_unread": self.mark_as_unread,
-            "set_flag": self.set_flag,
-            "add_category": self.add_category,
-            "unsubscribe": self.unsubscribe,
-            "unsubscribe_url": self.unsubscribe_url,
-            "unsubscribe_mailto": self.unsubscribe_mailto,
-            "explanation": self.explanation,
-            "is_enabled": self.is_enabled,
-        }
+        d = asdict(self)
+        d["action_type"] = self.action_type.value
+        return d
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> PlannedAction:

@@ -22,12 +22,12 @@ class AiConfig:
     api_key: Optional[str] = None
     timeout_seconds: int = 10
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self, include_secrets: bool = False) -> Dict[str, Any]:
         return {
             "provider": self.provider,
             "endpoint_url": self.endpoint_url,
             "model_name": self.model_name,
-            "api_key": self.api_key,
+            "api_key": self.api_key if include_secrets else None,
             "timeout_seconds": self.timeout_seconds,
         }
 
@@ -42,23 +42,42 @@ class AiConfig:
         )
 
     def save_to_path(self, path: Optional[Path] = None) -> None:
+        from py_inbox_helper.security import delete_secret, store_secret
+
         target = path or (Path.home() / ".py_inbox_helper" / "ai_config.json")
         try:
+            if self.api_key:
+                store_secret("ai_api_key", self.api_key)
+            else:
+                delete_secret("ai_api_key")
+
             target.parent.mkdir(parents=True, exist_ok=True)
             with open(target, "w", encoding="utf-8") as f:
-                json.dump(self.to_dict(), f, indent=2)
+                json.dump(self.to_dict(include_secrets=False), f, indent=2)
         except Exception as ex:
             logger.warning("Could not save AI config: %s", ex)
 
     @classmethod
     def load_from_path(cls, path: Optional[Path] = None) -> AiConfig:
+        from py_inbox_helper.security import get_secret, store_secret
+
         target = path or (Path.home() / ".py_inbox_helper" / "ai_config.json")
         if not target.exists():
             return cls()
         try:
             with open(target, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            return cls.from_dict(data)
+            cfg = cls.from_dict(data)
+
+            secret = get_secret("ai_api_key")
+            if secret:
+                cfg.api_key = secret
+            elif cfg.api_key:
+                # Migrate legacy plaintext key to keyring and re-save cleaned file
+                store_secret("ai_api_key", cfg.api_key)
+                cfg.save_to_path(target)
+
+            return cfg
         except Exception as ex:
             logger.warning("Could not load AI config from %s: %s", target, ex)
             return cls()
