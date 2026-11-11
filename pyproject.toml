@@ -1,6 +1,6 @@
 [project]
 name = "py-inbox-helper"
-version = "1.2.2"
+version = "1.2.3"
 description = "A python GUI application to help manage a chaotic and neglected email inbox of a busy person."
 readme = "README.md"
 authors = [
@@ -21,6 +21,7 @@ dev = [
 
 [project.scripts]
 py-inbox-helper = "py_inbox_helper:main"
+main = "py_inbox_helper:main"
 
 [build-system]
 requires = ["uv_build>=0.12.6,<0.13.0"]
