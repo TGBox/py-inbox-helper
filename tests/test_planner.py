@@ -43,7 +43,7 @@ def test_planner_generates_default_preset_actions():
     n_act = next(a for a in plan.actions if "NEWSLETTER" in a.email_id)
     assert n_act.target_folder == "04_Newsletter"
     assert n_act.mark_as_read is True
-    assert n_act.unsubscribe is True
+    assert n_act.unsubscribe is False  # unsubscribing is opt-in
 
     # Invoice
     i_act = next(a for a in plan.actions if "INVOICE_FINANCE" in a.email_id)
@@ -79,3 +79,13 @@ def test_planner_never_touches_protected_senders():
     assert action.set_flag is None and action.add_category is None
     assert action.unsubscribe is False
     assert "Keine Änderung" in planner.simulate_dry_run(plan)[0].message
+
+
+def test_planner_unsubscribes_only_when_enabled_in_rules():
+    config = PlannerPresetConfig()
+    config.category_rules[EmailCategory.NEWSLETTER].offer_unsubscribe = True
+    planner = ActionPlanner(config=config)
+
+    plan = planner.create_plan("user@test.de", [make_categorized_email(EmailCategory.NEWSLETTER, has_unsub=True)])
+    assert plan.actions[0].unsubscribe is True
+    assert plan.actions[0].unsubscribe_url == "https://unsub.com"

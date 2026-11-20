@@ -93,20 +93,37 @@ class OutlookComProvider(BaseMailProvider):
         self._ensure_connected()
         folders_list: List[FolderInfo] = []
 
-        root_folder = None
+        root_folder = self._find_root_folder(account_id)
+        self._traverse_folders(root_folder, "", folders_list)
+
+        return folders_list
+
+    def _find_root_folder(self, account_id: str) -> Any:
+        """Returns the root folder of exactly the given mailbox (store).
+
+        Raises LookupError if the mailbox is not available. There is deliberately
+        no fallback to another mailbox: reading from or moving mails into the
+        wrong mailbox must never happen silently.
+        """
         for i in range(1, self._namespace.Folders.Count + 1):
             f = self._namespace.Folders.Item(i)
             if f.StoreID == account_id or f.Name == account_id:
-                root_folder = f
-                break
+                return f
+        try:
+            root = self._namespace.GetStoreFromID(account_id).GetRootFolder()
+            if root is not None:
+                return root
+        except Exception:
+            pass
+        label = account_id if len(account_id) <= 40 else f"{account_id[:16]}…"
+        raise LookupError(
+            f"Postfach '{label}' wurde in Outlook nicht gefunden (Konto entfernt oder Outlook-Profil gewechselt?)"
+        )
 
-        if not root_folder and self._namespace.Folders.Count > 0:
-            root_folder = self._namespace.Folders.Item(1)
-
-        if root_folder:
-            self._traverse_folders(root_folder, "", folders_list)
-
-        return folders_list
+    def _get_deleted_items_folder(self, account_id: str) -> Any:
+        """Returns 'Deleted Items' of the given mailbox - not of Outlook's default mailbox."""
+        root_folder = self._find_root_folder(account_id)
+        return root_folder.Store.GetDefaultFolder(OL_FOLDER_DELETED_ITEMS)
 
     def _traverse_folders(self, parent_folder: Any, current_path: str, results: List[FolderInfo]):
         for i in range(1, parent_folder.Folders.Count + 1):
@@ -285,18 +302,7 @@ class OutlookComProvider(BaseMailProvider):
 
     def _resolve_folder_by_path(self, account_id: str, path: str) -> Optional[Any]:
         """Finds a COM folder object by matching its path."""
-        root_folder = None
-        for i in range(1, self._namespace.Folders.Count + 1):
-            f = self._namespace.Folders.Item(i)
-            if f.StoreID == account_id or f.Name == account_id:
-                root_folder = f
-                break
-
-        if not root_folder and self._namespace.Folders.Count > 0:
-            root_folder = self._namespace.Folders.Item(1)
-
-        if not root_folder:
-            return None
+        root_folder = self._find_root_folder(account_id)
 
         parts = path.strip("/").split("/")
         current = root_folder
@@ -314,18 +320,7 @@ class OutlookComProvider(BaseMailProvider):
 
     def _get_or_create_folder(self, account_id: str, path: str) -> Optional[Any]:
         """Finds or creates a folder path in the store."""
-        root_folder = None
-        for i in range(1, self._namespace.Folders.Count + 1):
-            f = self._namespace.Folders.Item(i)
-            if f.StoreID == account_id or f.Name == account_id:
-                root_folder = f
-                break
-
-        if not root_folder and self._namespace.Folders.Count > 0:
-            root_folder = self._namespace.Folders.Item(1)
-
-        if not root_folder:
-            return None
+        root_folder = self._find_root_folder(account_id)
 
         parts = path.strip("/").split("/")
         current = root_folder
@@ -361,7 +356,7 @@ class OutlookComProvider(BaseMailProvider):
             # 1. Target Folder Move
             if action.target_folder:
                 if action.target_folder in ("Gelöschte Elemente", "Trash", "Papierkorb"):
-                    deleted_folder = self._namespace.GetDefaultFolder(OL_FOLDER_DELETED_ITEMS)
+                    deleted_folder = self._get_deleted_items_folder(account_id)
                     item = item.Move(deleted_folder)
                     executed_changes.append("In Gelöschte Elemente verschoben")
                     # Moving usually assigns a new EntryID; remember it for rollback.

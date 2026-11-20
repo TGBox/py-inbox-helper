@@ -34,7 +34,9 @@ class PlannerPresetConfig:
         EmailCategory.NEWSLETTER: CategoryRulePreset(
             target_folder="04_Newsletter",
             mark_as_read=True,
-            offer_unsubscribe=True,
+            # Opt-in only: an unsubscribe cannot be rolled back, and many wanted
+            # mails (GitHub/GitLab notifications, mailing lists) carry the header too.
+            offer_unsubscribe=False,
         ),
         EmailCategory.INVOICE_FINANCE: CategoryRulePreset(
             target_folder="03_Rechnungen & Finanzen",
