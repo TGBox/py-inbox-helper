@@ -1,8 +1,17 @@
 # Changelog
 
+## SemVer v1.2.3
+
+- 2026-11-11 (3887f69): feat: add new main script, bump semver
+
 ## SemVer v1.2.2
 
-- 2026-10-13 (628e94b): fix!: fix cleartext saving of credentials, add build setup to allow for compilation to linux, fix gui rendering of huge lists, optimize backup creation, add new tests
+- 2026-11-11 (833bfdd): Merge pull request #2 from TGBox/fable-fix
+- 2026-11-11 (4ea74db): Merge pull request #1 from TGBox/master
+- 2026-11-11 (20a8d7c): Merge branch 'fable-fix' into master
+- 2026-11-11 (81df21e): fix: fix import linting issue
+- 2026-11-11 (463742d): fix: fable auto run to fix all obvious issues
+- 2026-10-13 (2a9605a): fix!: fix cleartext saving of credentials, add build setup to allow for compilation to linux, fix gui rendering of huge lists, optimize backup creation, add new tests
 
 ## SemVer v1.2.1
 
