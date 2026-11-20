@@ -1,4 +1,5 @@
 """Tests for OutlookComProvider mailbox resolution, using fake COM objects."""
+import threading
 from unittest.mock import MagicMock
 import pytest
 
@@ -115,3 +116,41 @@ def test_unknown_mailbox_never_falls_back_to_first_mailbox(outlook):
     assert "nicht gefunden" in result.message
     item.Move.assert_not_called()
     assert primary.root.Folders.Count == 2  # nothing created in the first mailbox
+
+
+def test_each_thread_gets_its_own_outlook_connection(monkeypatch):
+    """Regression: the COM object of the GUI thread was reused in worker threads."""
+    import py_inbox_helper.provider.outlook_provider as module
+
+    created = []
+
+    def fake_get_active_object(_name):
+        app = MagicMock()
+        created.append((threading.get_ident(), app))
+        return app
+
+    coinit_threads = []
+    monkeypatch.setattr(module.win32com.client, "GetActiveObject", fake_get_active_object, raising=False)
+    monkeypatch.setattr(module.pythoncom, "CoInitialize", lambda: coinit_threads.append(threading.get_ident()))
+
+    provider = OutlookComProvider()
+    assert provider.is_available()
+    assert provider.is_available()  # second call reuses the connection of this thread
+    main_app = provider._app
+
+    seen = {}
+
+    def worker():
+        seen["before"] = provider._app  # must not see the GUI thread's object
+        provider._ensure_connected()
+        seen["after"] = provider._app
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    thread.join()
+
+    assert seen["before"] is None
+    assert seen["after"] is not None and seen["after"] is not main_app
+    assert provider._app is main_app
+    assert len(created) == 2
+    assert len(coinit_threads) == 2 and coinit_threads[0] != coinit_threads[1]

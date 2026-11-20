@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 import pythoncom
@@ -26,14 +27,35 @@ class OutlookComProvider(BaseMailProvider):
     """Integrates directly with the local Outlook Desktop Client via MAPI."""
 
     def __init__(self):
-        self._app = None
-        self._namespace = None
+        # COM objects are bound to the thread that created them. The GUI thread and
+        # every background worker (scan, execution, rollback) therefore each get
+        # their own Outlook connection; sharing one raises "interface marshalled
+        # for a different thread" (0x8001010E).
+        self._local = threading.local()
         # Cache: Exchange X.500 address -> SMTP address
         self._smtp_cache: Dict[str, str] = {}
 
+    @property
+    def _app(self) -> Any:
+        return getattr(self._local, "app", None)
+
+    @_app.setter
+    def _app(self, value: Any) -> None:
+        self._local.app = value
+
+    @property
+    def _namespace(self) -> Any:
+        return getattr(self._local, "namespace", None)
+
+    @_namespace.setter
+    def _namespace(self, value: Any) -> None:
+        self._local.namespace = value
+
     def _ensure_connected(self):
-        """Initializes COM and connects to Outlook application."""
-        pythoncom.CoInitialize()
+        """Initializes COM for the calling thread and connects it to Outlook."""
+        if not getattr(self._local, "com_initialized", False):
+            pythoncom.CoInitialize()
+            self._local.com_initialized = True
         if self._app is None:
             try:
                 self._app = win32com.client.GetActiveObject("Outlook.Application")
