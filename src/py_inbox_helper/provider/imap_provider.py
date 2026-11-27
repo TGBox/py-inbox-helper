@@ -15,7 +15,7 @@ import re
 from typing import Any, Callable, Dict, Iterator, List, Optional, Set, Tuple
 import uuid
 
-from py_inbox_helper.models import EmailItem, ExecutionResult, PlannedAction, ensure_utc
+from py_inbox_helper.models import EmailItem, ExecutionResult, PlannedAction, ensure_utc, html_to_text
 from py_inbox_helper.provider.base import AccountInfo, BaseMailProvider, FolderInfo
 from py_inbox_helper.security import delete_secret, get_secret, store_secret
 
@@ -29,6 +29,8 @@ TRASH_ALIASES = {
 
 # Number of messages requested per FETCH command during a scan.
 FETCH_CHUNK_SIZE = 200
+# Only the start of each body is fetched during a scan (enough for previews/exports).
+BODY_FETCH_BYTES = 16384
 
 _IMAP_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
@@ -580,7 +582,8 @@ class ImapMailProvider(BaseMailProvider):
                     chunk = uids[start:start + FETCH_CHUNK_SIZE]
                     res, msg_data = client.uid(
                         "FETCH", ",".join(chunk),
-                        "(UID RFC822.SIZE INTERNALDATE FLAGS BODY.PEEK[HEADER])",
+                        "(UID RFC822.SIZE INTERNALDATE FLAGS BODY.PEEK[HEADER] "
+                        f"BODY.PEEK[TEXT]<0.{BODY_FETCH_BYTES}>)",
                     )
                     if res != "OK" or not msg_data:
                         continue
@@ -590,11 +593,11 @@ class ImapMailProvider(BaseMailProvider):
                         key=lambda rec: int(rec[0]),
                         reverse=True,
                     )
-                    for uid, meta_info, raw_header in records:
+                    for uid, meta_info, raw_header, raw_text in records:
                         if max_count and len(emails) >= max_count:
                             break
                         item = self._build_email_item(
-                            profile, account_id, folder, uidvalidity, uid, meta_info, raw_header
+                            profile, account_id, folder, uidvalidity, uid, meta_info, raw_header, raw_text
                         )
                         if date_from and item.received_time < date_from:
                             continue
@@ -614,25 +617,68 @@ class ImapMailProvider(BaseMailProvider):
         return emails
 
     @staticmethod
-    def _iter_fetch_records(msg_data: List[Any]) -> Iterator[Tuple[str, bytes, bytes]]:
-        """Yields (uid, meta, raw header) for each message of a FETCH response."""
-        records: List[List[bytes]] = []
-        current: Optional[List[bytes]] = None
+    def _iter_fetch_records(msg_data: List[Any]) -> Iterator[Tuple[str, bytes, bytes, bytes]]:
+        """Yields (uid, meta, raw header, raw text start) for each message of a FETCH response.
+
+        A message can arrive as several literals (BODY[HEADER] and BODY[TEXT]); literals
+        that do not start a new "<seq> (" response belong to the current message.
+        """
+        records: List[dict] = []
+        current: Optional[dict] = None
         for part in msg_data:
             if isinstance(part, tuple) and len(part) >= 2:
-                current = [part[0] or b"", part[1] or b""]
-                records.append(current)
+                prefix, literal = part[0] or b"", part[1] or b""
+                if current is None or re.match(rb"\s*\d+ \(", prefix):
+                    current = {"meta": b"", "header": b"", "text": b""}
+                    records.append(current)
+                current["meta"] += b" " + prefix
+                if re.search(rb"BODY\[TEXT\](?:<\d+>)?\s*\{\d+\}\s*$", prefix):
+                    current["text"] = literal
+                else:
+                    current["header"] = literal
             elif isinstance(part, bytes) and current is not None:
                 if re.match(rb"\s*\d+ \(", part):
                     # Unrelated untagged FETCH (e.g. a flag update for another message)
                     current = None
                 else:
-                    # Attributes the server sent after the header literal
-                    current[0] += b" " + part
-        for meta, raw_header in records:
-            match = re.search(rb"\bUID (\d+)", meta)
+                    # Attributes the server sent after a literal
+                    current["meta"] += b" " + part
+        for rec in records:
+            match = re.search(rb"\bUID (\d+)", rec["meta"])
             if match:
-                yield match.group(1).decode(), meta, raw_header
+                yield match.group(1).decode(), rec["meta"], rec["header"], rec["text"]
+
+    @staticmethod
+    def _extract_bodies(raw_header: bytes, raw_text: bytes) -> Tuple[str, str]:
+        """Returns (plain text, html) from the header plus the (possibly truncated) body start."""
+        if not raw_text:
+            return "", ""
+        try:
+            msg = email.message_from_bytes(raw_header + raw_text)
+        except Exception:
+            return "", ""
+        plain, html_body = "", ""
+        parts = msg.walk() if msg.is_multipart() else [msg]
+        for part in parts:
+            if part.get_content_maintype() == "multipart" or part.get_filename():
+                continue
+            ctype = part.get_content_type()
+            if ctype not in ("text/plain", "text/html"):
+                continue
+            try:
+                payload = part.get_payload(decode=True) or b""
+                charset = part.get_content_charset() or "utf-8"
+                try:
+                    text = payload.decode(charset, errors="replace")
+                except LookupError:
+                    text = payload.decode("utf-8", errors="replace")
+            except Exception:
+                continue
+            if ctype == "text/plain" and not plain:
+                plain = text.strip()
+            elif ctype == "text/html" and not html_body:
+                html_body = text.strip()
+        return plain, html_body
 
     def _build_email_item(
         self,
@@ -643,6 +689,7 @@ class ImapMailProvider(BaseMailProvider):
         uid: str,
         meta_info: bytes,
         raw_header: bytes,
+        raw_text: bytes = b"",
     ) -> EmailItem:
         msg = email.message_from_bytes(raw_header)
         subject = self._decode_mime_str(msg.get("Subject", "(Kein Betreff)"))
@@ -690,6 +737,10 @@ class ImapMailProvider(BaseMailProvider):
         for h_key in msg.keys():
             headers_dict[h_key] = str(msg.get(h_key, ""))
 
+        body_text, body_html = self._extract_bodies(raw_header, raw_text)
+        preview_src = " ".join(body_text.split()) if body_text else html_to_text(body_html)
+        body_preview = preview_src[:300] or subject
+
         return EmailItem(
             id=f"{account_id}_{folder}_{uidvalidity}-{uid}",
             entry_id=uid,
@@ -699,7 +750,9 @@ class ImapMailProvider(BaseMailProvider):
             sender_name=decoded_sender_name,
             sender_email=decoded_sender_email,
             received_time=received_time,
-            body_preview=subject,
+            body_preview=body_preview,
+            body_text=body_text,
+            body_html=body_html,
             is_read=b"\\Seen" in meta_info,
             folder_path=decode_imap_utf7(folder),
             size_bytes=size_bytes,

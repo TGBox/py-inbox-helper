@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 from py_inbox_helper.analysis_storage import AnalysisStorageManager
 from py_inbox_helper.models import AnalysisSession
 from py_inbox_helper.storage import format_bytes
+from py_inbox_helper.ui.ai_export_flow import run_ai_export
 from py_inbox_helper.ui.styles import CATEGORY_COLORS
 
 
@@ -173,6 +174,12 @@ class SavedAnalysesDialog(QDialog):
         self.export_btn.setFixedHeight(36)
         self.export_btn.clicked.connect(self._export_selected)
 
+        self.ai_export_btn = QPushButton("Für KI exportieren...")
+        self.ai_export_btn.setEnabled(False)
+        self.ai_export_btn.setFixedHeight(36)
+        self.ai_export_btn.setToolTip("Exportiert die Analyse kompakt als Markdown für die Auswertung mit einer KI")
+        self.ai_export_btn.clicked.connect(self._export_selected_for_ai)
+
         self.delete_btn = QPushButton("Löschen")
         self.delete_btn.setEnabled(False)
         self.delete_btn.setFixedHeight(36)
@@ -181,6 +188,7 @@ class SavedAnalysesDialog(QDialog):
 
         actions_row.addWidget(self.load_btn, 2)
         actions_row.addWidget(self.export_btn, 1)
+        actions_row.addWidget(self.ai_export_btn, 1)
         actions_row.addWidget(self.delete_btn, 1)
         d_layout.addLayout(actions_row)
 
@@ -284,6 +292,7 @@ class SavedAnalysesDialog(QDialog):
             self.category_chips_label.setText("")
             self.load_btn.setEnabled(False)
             self.export_btn.setEnabled(False)
+            self.ai_export_btn.setEnabled(False)
             self.delete_btn.setEnabled(False)
             return
 
@@ -292,6 +301,7 @@ class SavedAnalysesDialog(QDialog):
             session_meta = self._filtered_data[row]
             self.load_btn.setEnabled(True)
             self.export_btn.setEnabled(True)
+            self.ai_export_btn.setEnabled(True)
             self.delete_btn.setEnabled(True)
 
             acc = session_meta.get("account_name") or "(Standard-Konto)"
@@ -362,6 +372,24 @@ class SavedAnalysesDialog(QDialog):
                     QMessageBox.information(self, "Export erfolgreich", f"Die Analyse wurde erfolgreich exportiert nach:\n{target_path}")
                 except Exception as ex:
                     QMessageBox.critical(self, "Export fehlgeschlagen", f"Fehler beim Exportieren:\n{ex}")
+
+    def _export_selected_for_ai(self):
+        selected_rows = self.table.selectionModel().selectedRows()
+        if not selected_rows:
+            return
+        row = selected_rows[0].row()
+        if row < len(self._filtered_data):
+            session_id = self._filtered_data[row]["session_id"]
+            session = self.storage_manager.load_session(session_id)
+            if not session:
+                QMessageBox.critical(self, "Fehler beim Laden", f"Die Sitzung '{session_id}' konnte nicht geladen werden.")
+                return
+            run_ai_export(
+                self,
+                session.emails,
+                account_name=session.account_name or session.account_id,
+                notes=session.notes,
+            )
 
     def _import_from_file(self):
         src_path, _ = QFileDialog.getOpenFileName(

@@ -290,6 +290,7 @@ class AnalysisTab(QWidget):
     open_preview_requested = Signal(object)
     save_analysis_requested = Signal()
     load_analysis_requested = Signal()
+    ai_export_requested = Signal()
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -373,7 +374,13 @@ class AnalysisTab(QWidget):
         self.load_analysis_btn.setToolTip("Lädt eine früher gespeicherte Analyse-Sitzung")
         self.load_analysis_btn.clicked.connect(self.load_analysis_requested.emit)
 
+        self.ai_export_btn = QPushButton("🤖 Für KI exportieren...")
+        self.ai_export_btn.setToolTip("Exportiert E-Mails und Analyse kompakt als Markdown für die Auswertung mit einer KI")
+        self.ai_export_btn.clicked.connect(self.ai_export_requested.emit)
+        self.ai_export_btn.setEnabled(False)
+
         view_toggle_layout.addWidget(self.save_analysis_btn)
+        view_toggle_layout.addWidget(self.ai_export_btn)
         view_toggle_layout.addWidget(self.load_analysis_btn)
         layout.addLayout(view_toggle_layout)
 
@@ -559,6 +566,7 @@ class AnalysisTab(QWidget):
         self._emails = emails
         self._sender_clusters = self.storage_analyzer.cluster_by_sender(emails)
         self.save_analysis_btn.setEnabled(len(emails) > 0)
+        self.ai_export_btn.setEnabled(len(emails) > 0)
         self._update_kpi_cards()
         self._render_clusters()
         self._apply_filter()
