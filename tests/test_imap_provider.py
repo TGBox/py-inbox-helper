@@ -272,3 +272,43 @@ def test_restore_fails_loudly_when_message_is_gone(server, tmp_path: Path):
     with pytest.raises(Exception, match="nicht mehr gefunden"):
         provider.restore_item(entry_id="99", store_id="prof-1", target_folder="INBOX", is_read=True, categories=[])
     provider.close()
+
+
+def test_fetch_loads_plain_text_body(server, tmp_path: Path):
+    server.add_message("INBOX", make_headers("Mit Text", "m1"), body=b"Hallo Welt,\r\nbitte Rechnung pruefen.\r\n")
+    provider = make_provider(server, tmp_path)
+
+    [mail] = provider.fetch_emails("prof-1", ["INBOX"])
+    assert mail.body_text.startswith("Hallo Welt,")
+    assert "Rechnung" in mail.body_preview
+    # Body fetch uses PEEK, so nothing is marked as read
+    assert server.mailboxes["INBOX"][1]["flags"] == set()
+
+
+def test_fetch_extracts_text_from_multipart_and_html():
+    headers = (
+        "Subject: Multi\r\n"
+        'Content-Type: multipart/alternative; boundary="XX"\r\n'
+        "\r\n"
+    ).encode()
+    body = (
+        b"--XX\r\nContent-Type: text/html; charset=utf-8\r\n\r\n"
+        b"<html><style>p{}</style><p>Gr\xc3\xbc\xc3\x9fe &amp; Dank</p></html>\r\n"
+        b"--XX\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nGr\xc3\xbc\xc3\x9fe und Dank\r\n--XX--\r\n"
+    )
+    plain, html_body = ImapMailProvider._extract_bodies(headers, body)
+    assert plain == "Grüße und Dank"
+    assert "<p>" in html_body
+
+    # Truncated body (cut mid-part) must not raise
+    plain, _ = ImapMailProvider._extract_bodies(headers, body[:60])
+    assert isinstance(plain, str)
+
+
+def test_fetch_without_body_falls_back_to_subject(server, tmp_path: Path):
+    server.add_message("INBOX", make_headers("Nur Header", "m1"))
+    provider = make_provider(server, tmp_path)
+
+    [mail] = provider.fetch_emails("prof-1", ["INBOX"])
+    assert mail.body_text == ""
+    assert mail.body_preview == "Nur Header"

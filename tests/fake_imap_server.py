@@ -38,11 +38,12 @@ class FakeImapServer:
         self.uidvalidity[name] = 1000 + len(self.mailboxes)
 
     def add_message(self, mailbox: str, headers: bytes, flags=(), size: int = 1000,
-                    internaldate: str = "15-May-2024 14:30:00 +0200") -> int:
+                    internaldate: str = "15-May-2024 14:30:00 +0200", body: bytes = b"") -> int:
         uid = self.next_uid[mailbox]
         self.next_uid[mailbox] += 1
         self.mailboxes[mailbox][uid] = {
             "headers": headers, "flags": set(flags), "size": size, "internaldate": internaldate,
+            "body": body,
         }
         return uid
 
@@ -148,11 +149,16 @@ class FakeImapServer:
                             )
                         else:
                             flags = " ".join(sorted(msg["flags"]))
-                            # FLAGS deliberately sent AFTER the literal, as some servers do
+                            text_part = b""
+                            text_match = re.search(r"BODY\.PEEK\[TEXT\]<0\.(\d+)>", items)
+                            if text_match:
+                                text = msg["body"][: int(text_match.group(1))]
+                                text_part = f" BODY[TEXT]<0> {{{len(text)}}}\r\n".encode() + text
+                            # FLAGS deliberately sent AFTER the literals, as some servers do
                             conn.sendall(
                                 f'* {seq(uid)} FETCH (UID {uid} RFC822.SIZE {msg["size"]} '
                                 f'INTERNALDATE "{msg["internaldate"]}" BODY[HEADER] {{{len(msg["headers"])}}}\r\n'.encode()
-                                + msg["headers"] + f" FLAGS ({flags}))\r\n".encode()
+                                + msg["headers"] + text_part + f" FLAGS ({flags}))\r\n".encode()
                             )
                     send(f"{tag} OK done")
                 elif cmd == "UID STORE":

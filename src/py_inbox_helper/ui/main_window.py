@@ -30,6 +30,7 @@ from py_inbox_helper.provider.imap_provider import ImapMailProvider, ImapProfile
 from py_inbox_helper.provider.mock_provider import MockMailProvider
 from py_inbox_helper.provider.outlook_provider import OutlookComProvider
 from py_inbox_helper.storage import format_bytes
+from py_inbox_helper.ui.ai_export_flow import run_ai_export
 from py_inbox_helper.ui.saved_analyses_dialog import SavedAnalysesDialog
 from py_inbox_helper.ui.settings_dialog import SettingsDialog
 from py_inbox_helper.ui.styles import DARK_THEME_QSS
@@ -199,6 +200,7 @@ class MainWindow(QMainWindow):
         self.analysis_tab.restore_single_requested.connect(self._restore_single_from_latest)
         self.analysis_tab.save_analysis_requested.connect(self._save_current_analysis)
         self.analysis_tab.load_analysis_requested.connect(self._open_saved_analyses_dialog)
+        self.analysis_tab.ai_export_requested.connect(self._export_current_for_ai)
 
         self.rules_tab.generate_plan_requested.connect(self._generate_plan_and_dry_run)
         self.protocol_tab.run_dry_run_requested.connect(self._generate_plan_and_dry_run)
@@ -512,6 +514,16 @@ class MainWindow(QMainWindow):
             f"Die Analyse '{session.session_id}' mit {len(self.current_emails)} E-Mails wurde erfolgreich gespeichert.\n\n"
             "Du kannst sie jederzeit über 'Analyse laden' wiederherstellen.",
         )
+
+    def _export_current_for_ai(self):
+        """Exports the currently loaded analysis as compact Markdown for AI review."""
+        account_name = self.current_account_id
+        if hasattr(self.provider, "list_accounts"):
+            for a in self.provider.list_accounts():
+                if a.id == self.current_account_id:
+                    account_name = a.name
+                    break
+        run_ai_export(self, self.current_emails, account_name=account_name)
 
     def _open_saved_analyses_dialog(self):
         """Opens SavedAnalysesDialog allowing the user to select and restore a past analysis."""

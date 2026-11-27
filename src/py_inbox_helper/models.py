@@ -4,8 +4,19 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+import html
 from typing import Any, Dict, List, Optional
 import re
+
+
+_HTML_INVISIBLE_RE = re.compile(r"<(script|style|head)\b.*?</\1>", re.IGNORECASE | re.DOTALL)
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def html_to_text(value: str) -> str:
+    """Strips tags, scripts and styles from HTML and collapses whitespace."""
+    text = _HTML_TAG_RE.sub(" ", _HTML_INVISIBLE_RE.sub(" ", value or ""))
+    return " ".join(html.unescape(text).split())
 
 
 class ActionType(str, Enum):
